@@ -71,7 +71,7 @@ function formatUsdFromLbpDetailed(amount, exchangeRate) {
     return '$0'
   }
 
-  return `$${((Number(amount) || 0) / rate).toLocaleString('en-US', {
+  return `$${((Number(amount) || 0) / rate).toLocaleString('en-US', { 
     maximumFractionDigits: 2,
   })}`
 }
