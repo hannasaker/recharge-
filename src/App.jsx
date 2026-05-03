@@ -2683,14 +2683,28 @@ function App() {
     }
 
     return (
-      <div className="rt-overlay" style={styles.overlay}>
-        <form className="rt-modal" onSubmit={handleQuickRechargeSubmit} style={styles.modal}>
-          <div className="rt-card-top" style={styles.cardTop}>
+      <div className="rt-overlay rt-quick-overlay" style={styles.overlay}>
+        <form className="rt-modal rt-quick-recharge-modal" onSubmit={handleQuickRechargeSubmit} style={styles.modal}>
+          <div className="rt-card-top rt-quick-header" style={styles.cardTop}>
             <div>
-              <h2 style={styles.sectionTitle}>Quick Recharge</h2>
-              <p style={styles.phone}>{getCustomerLabel(quickRechargeCustomer)}</p>
+              <h2 className="rt-quick-title" style={styles.sectionTitle}>Quick Recharge</h2>
+              <p className="rt-quick-customer" style={styles.phone}>{getCustomerLabel(quickRechargeCustomer)}</p>
             </div>
-            <button type="button" onClick={closeQuickRecharge} style={styles.quietButton}>
+            <button
+              className="rt-quick-close-mobile"
+              type="button"
+              aria-label="Close quick recharge"
+              onClick={closeQuickRecharge}
+              style={styles.quietButton}
+            >
+              X
+            </button>
+            <button
+              className="rt-quick-close-desktop"
+              type="button"
+              onClick={closeQuickRecharge}
+              style={styles.quietButton}
+            >
               Close
             </button>
           </div>
@@ -2714,6 +2728,19 @@ function App() {
             />
           </label>
 
+          <div className="rt-quick-amount-buttons">
+            {[5, 10, 15].map((amount) => (
+              <button
+                key={amount}
+                type="button"
+                onClick={() => setQuickRechargeAmount(String(amount))}
+                style={styles.quietButton}
+              >
+                {amount}
+              </button>
+            ))}
+          </div>
+
           <label style={styles.field}>
             <span style={styles.label}>Notes</span>
             <textarea
@@ -2727,6 +2754,7 @@ function App() {
           {quickRechargeError && <p style={styles.error}>{quickRechargeError}</p>}
 
           <button
+            className="rt-quick-submit"
             type="submit"
             disabled={isQuickRechargeSubmitDisabled}
             style={{

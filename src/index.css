@@ -205,6 +205,11 @@ code {
   display: none;
 }
 
+.rt-quick-close-mobile,
+.rt-quick-amount-buttons {
+  display: none !important;
+}
+
 @media (min-width: 1180px) {
   .rt-content {
     max-width: 1360px !important;
@@ -672,6 +677,90 @@ code {
     border-radius: 0 !important;
     padding: 14px !important;
     box-shadow: none !important;
+  }
+
+  .rt-quick-overlay {
+    place-items: start center !important;
+    padding: 8px !important;
+    overflow-y: auto;
+  }
+
+  .rt-quick-recharge-modal {
+    width: min(100%, calc(100vw - 16px)) !important;
+    min-height: auto !important;
+    max-height: calc(100svh - 16px) !important;
+    align-content: start;
+    gap: 10px !important;
+    padding: 12px 12px calc(14px + env(safe-area-inset-bottom)) !important;
+    border-radius: 12px !important;
+    overflow-y: auto;
+  }
+
+  .rt-quick-header {
+    position: relative;
+    align-items: start !important;
+    padding-right: 48px;
+    gap: 4px !important;
+  }
+
+  .rt-quick-title {
+    margin: 0 0 2px !important;
+    font-size: 22px !important;
+    line-height: 1.15;
+  }
+
+  .rt-quick-customer {
+    font-size: 14px !important;
+    line-height: 1.25;
+  }
+
+  .rt-quick-close-desktop {
+    display: none !important;
+  }
+
+  .rt-quick-close-mobile {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 40px !important;
+    min-height: 40px !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    padding: 0 !important;
+    border-radius: 999px !important;
+    font-weight: 800;
+  }
+
+  .rt-quick-recharge-modal label {
+    gap: 4px !important;
+  }
+
+  .rt-quick-recharge-modal textarea {
+    min-height: 64px !important;
+  }
+
+  .rt-quick-amount-buttons {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .rt-quick-amount-buttons button {
+    width: 100% !important;
+    min-height: 44px !important;
+    justify-content: center;
+  }
+
+  .rt-quick-submit {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    width: 100% !important;
+    min-height: 54px !important;
+    justify-self: stretch !important;
+    margin-top: 2px;
+    box-shadow: var(--shadow);
   }
 
   .rt-mobile-only {
