@@ -227,16 +227,26 @@ function getRechargeAmount(recharge) {
 
 function getRechargePaidAmount(recharge) {
   const amount = getRechargeAmount(recharge)
-  const paidAmount = Math.round(Number(recharge?.paid_amount) || 0)
+  const rawPaidAmount = recharge?.paid_amount
+  const isMarkedPaid = String(recharge?.status || '').toLowerCase() === 'paid'
+
+  if (
+    isMarkedPaid &&
+    (rawPaidAmount === null || rawPaidAmount === undefined || rawPaidAmount === '')
+  ) {
+    return amount
+  }
+
+  const paidAmount = Math.round(Number(rawPaidAmount) || 0)
+
+  if (isMarkedPaid && paidAmount <= 0) {
+    return amount
+  }
 
   return Math.min(Math.max(paidAmount, 0), amount)
 }
 
 function getRechargeBalance(recharge) {
-  if (String(recharge?.status || '').toLowerCase() === 'paid') {
-    return 0
-  }
-
   return Math.max(getRechargeAmount(recharge) - getRechargePaidAmount(recharge), 0)
 }
 
@@ -763,6 +773,7 @@ function App() {
   const [recordPaymentAmount, setRecordPaymentAmount] = useState('')
   const [recordPaymentNotes, setRecordPaymentNotes] = useState('')
   const [recordPaymentError, setRecordPaymentError] = useState('')
+  const [recordPaymentSuccess, setRecordPaymentSuccess] = useState('')
   const [isRecordingPayment, setIsRecordingPayment] = useState(false)
   const [detailCustomerId, setDetailCustomerId] = useState('')
   const [isStatementVisible, setIsStatementVisible] = useState(false)
@@ -1368,6 +1379,7 @@ function App() {
     setRecordPaymentAmount('')
     setRecordPaymentNotes('')
     setRecordPaymentError('')
+    setRecordPaymentSuccess('')
   }, [])
 
   const closeRecordPayment = useCallback(() => {
@@ -1432,60 +1444,69 @@ function App() {
       return
     }
 
-    const customerOpenRecharges = recharges
-      .filter((recharge) => String(recharge.customer_id) === String(recordPaymentCustomerId))
-      .filter((recharge) => rechargeMatchesMonth(recharge, monthFilter, customMonth))
-      .filter((recharge) => getRechargeBalance(recharge) > 0)
-      .sort((firstRecharge, secondRecharge) => {
-        const firstDate = new Date(firstRecharge.created_at || 0).getTime()
-        const secondDate = new Date(secondRecharge.created_at || 0).getTime()
-
-        return firstDate - secondDate
-      })
-    const currentBalance = customerOpenRecharges.reduce(
-      (total, recharge) => total + getRechargeBalance(recharge),
-      0
-    )
-
-    if (currentBalance <= 0) {
-      setRecordPaymentError('This customer has no unpaid balance for the selected period.')
-      return
-    }
-
-    let remainingPayment = Math.min(paymentAmount, currentBalance)
-    const rechargeUpdates = []
-
-    for (const recharge of customerOpenRecharges) {
-      if (remainingPayment <= 0) {
-        break
-      }
-
-      const rechargeAmount = getRechargeAmount(recharge)
-      const currentPaidAmount = getRechargePaidAmount(recharge)
-      const rechargeBalance = getRechargeBalance(recharge)
-      const appliedAmount = Math.min(rechargeBalance, remainingPayment)
-      const nextPaidAmount = Math.min(currentPaidAmount + appliedAmount, rechargeAmount)
-      const nextStatus = nextPaidAmount >= rechargeAmount ? 'paid' : 'unpaid'
-      const updateData = {
-        paid_amount: nextPaidAmount,
-        status: nextStatus,
-      }
-
-      if (trimmedNotes) {
-        updateData.notes = appendPaymentNote(recharge.notes, trimmedNotes, appliedAmount)
-      }
-
-      rechargeUpdates.push({
-        id: recharge.id,
-        data: updateData,
-      })
-
-      remainingPayment -= appliedAmount
-    }
-
     try {
       setIsRecordingPayment(true)
       setRecordPaymentError('')
+      setRecordPaymentSuccess('')
+
+      const { data: freshRecharges, error: fetchError } = await supabase
+        .from('recharges')
+        .select('*')
+        .eq('customer_id', recordPaymentCustomerId)
+
+      if (fetchError) {
+        throw fetchError
+      }
+
+      const customerOpenRecharges = (freshRecharges || [])
+        .filter((recharge) => rechargeMatchesMonth(recharge, monthFilter, customMonth))
+        .filter((recharge) => getRechargeBalance(recharge) > 0)
+        .sort((firstRecharge, secondRecharge) => {
+          const firstDate = new Date(firstRecharge.created_at || 0).getTime()
+          const secondDate = new Date(secondRecharge.created_at || 0).getTime()
+
+          return firstDate - secondDate
+        })
+      const currentBalance = customerOpenRecharges.reduce(
+        (total, recharge) => total + getRechargeBalance(recharge),
+        0
+      )
+
+      if (currentBalance <= 0) {
+        setRecordPaymentError('This customer has no unpaid balance for the selected period.')
+        return
+      }
+
+      let remainingPayment = Math.min(paymentAmount, currentBalance)
+      const rechargeUpdates = []
+
+      for (const recharge of customerOpenRecharges) {
+        if (remainingPayment <= 0) {
+          break
+        }
+
+        const rechargeAmount = getRechargeAmount(recharge)
+        const currentPaidAmount = getRechargePaidAmount(recharge)
+        const rechargeBalance = getRechargeBalance(recharge)
+        const appliedAmount = Math.min(rechargeBalance, remainingPayment)
+        const nextPaidAmount = Math.min(currentPaidAmount + appliedAmount, rechargeAmount)
+        const nextStatus = nextPaidAmount >= rechargeAmount ? 'paid' : 'unpaid'
+        const updateData = {
+          paid_amount: nextPaidAmount,
+          status: nextStatus,
+        }
+
+        if (trimmedNotes) {
+          updateData.notes = appendPaymentNote(recharge.notes, trimmedNotes, appliedAmount)
+        }
+
+        rechargeUpdates.push({
+          id: recharge.id,
+          data: updateData,
+        })
+
+        remainingPayment -= appliedAmount
+      }
 
       const results = await Promise.all(
         rechargeUpdates.map((update) => (
@@ -1493,6 +1514,8 @@ function App() {
             .from('recharges')
             .update(update.data)
             .eq('id', update.id)
+            .select('*')
+            .single()
         ))
       )
       const failedResult = results.find((result) => result.error)
@@ -1501,19 +1524,22 @@ function App() {
         throw failedResult.error
       }
 
-      const updatesById = Object.fromEntries(
-        rechargeUpdates.map((update) => [String(update.id), update.data])
+      const updatedRechargesById = Object.fromEntries(
+        results
+          .filter((result) => result.data)
+          .map((result) => [String(result.data.id), result.data])
       )
 
       setRecharges((currentRecharges) => (
         currentRecharges.map((recharge) => {
-          const updateData = updatesById[String(recharge.id)]
+          const updatedRecharge = updatedRechargesById[String(recharge.id)]
 
-          return updateData ? { ...recharge, ...updateData } : recharge
+          return updatedRecharge || recharge
         })
       ))
+      setRecordPaymentSuccess(`Payment recorded: ${formatLbp(Math.min(paymentAmount, currentBalance))}`)
       closeRecordPayment()
-      fetchRecharges()
+      await fetchRecharges()
     } catch (error) {
       console.log('Error recording payment:', error)
       setRecordPaymentError(error.message || 'Could not record payment.')
@@ -2298,7 +2324,7 @@ function App() {
   }
 
   function renderRechargeActions(recharge) {
-    const isPaid = String(recharge.status || '').toLowerCase() === 'paid' || getRechargeBalance(recharge) <= 0
+    const isPaid = getRechargeBalance(recharge) <= 0
     const isPayingRecharge = payingRechargeId === String(recharge.id)
     const isDeletingRecharge = deletingRechargeId === String(recharge.id)
 
@@ -2409,10 +2435,10 @@ function App() {
 
   function renderRechargeCard(recharge, showCustomerName = true) {
     const customer = customersById[String(recharge.customer_id)]
-    const isPaid = String(recharge.status || '').toLowerCase() === 'paid' || getRechargeBalance(recharge) <= 0
+    const isPaid = getRechargeBalance(recharge) <= 0
     const isEditingRecharge = editingRechargeId === String(recharge.id)
     const rechargeAmount = getRechargeAmount(recharge)
-    const displayStatus = isPaid ? 'paid' : recharge.status || 'unpaid'
+    const displayStatus = isPaid ? 'paid' : 'unpaid'
     const formattedDate = recharge.created_at
       ? new Date(recharge.created_at).toLocaleDateString()
       : ''
@@ -2828,10 +2854,10 @@ function App() {
                   {showRechargeDetails && (
                     <div className="rt-recharge-preview-list rt-customer-extra" style={styles.rechargePreviewList}>
                       {customerRecharges.map((recharge) => {
-                        const isPaid = String(recharge.status || '').toLowerCase() === 'paid' || getRechargeBalance(recharge) <= 0
+                        const isPaid = getRechargeBalance(recharge) <= 0
                         const isPayingRecharge = payingRechargeId === String(recharge.id)
                         const rechargeAmount = getRechargeAmount(recharge)
-                        const displayStatus = isPaid ? 'paid' : recharge.status || 'unpaid'
+                        const displayStatus = isPaid ? 'paid' : 'unpaid'
 
                         return (
                           <div
@@ -3333,7 +3359,7 @@ function App() {
               inputMode="numeric"
               value={recordPaymentAmount}
               onChange={(event) => setRecordPaymentAmount(cleanLbpAmountInput(event.target.value))}
-              placeholder="250000"
+              placeholder="Example: 4000000"
               style={styles.input}
             />
           </label>
@@ -3633,6 +3659,10 @@ function App() {
               </div>
             </section>
 
+            {recordPaymentSuccess && (
+              <p className="rt-success-message">{recordPaymentSuccess}</p>
+            )}
+
             {statementContent}
 
             {editCustomerForm}
@@ -3731,6 +3761,10 @@ function App() {
               {isDeletingDetailCustomer ? 'Deleting...' : 'Delete Customer'}
             </button>
           </div>
+
+          {recordPaymentSuccess && (
+            <p className="rt-success-message">{recordPaymentSuccess}</p>
+          )}
 
           {editCustomerForm}
 
