@@ -3,10 +3,15 @@ import { supabase } from './lib/supabase'
 
 const defaultServices = ['Alfa', 'Touch', 'Ushare', 'Other']
 const rechargeStatuses = ['unpaid', 'paid']
+const customerTypes = [
+  { value: 'normal', label: 'Normal' },
+  { value: 'wholesale', label: 'Wholesale' },
+]
 const pages = [
   { id: 'dashboard', label: 'Dashboard', mobileLabel: 'Dashboard' },
   { id: 'addCustomer', label: 'Add Customer', mobileLabel: 'Add' },
   { id: 'customers', label: 'Customers & Balances', mobileLabel: 'Customers' },
+  { id: 'wholesale', label: 'Wholesale', mobileLabel: 'Wholesale' },
   { id: 'addRecharge', label: 'Add Recharge', mobileLabel: 'Recharge' },
   { id: 'services', label: 'Bundles/Services', mobileLabel: 'Services' },
   { id: 'history', label: 'Recharge History', mobileLabel: 'History' },
@@ -58,22 +63,17 @@ function formatUsdFromLbp(amount, exchangeRate) {
   const rate = Number(exchangeRate)
 
   if (!Number.isFinite(rate) || rate <= 0) {
-    return '$0'
-  }
-
-  return `$${Math.round((Number(amount) || 0) / rate).toLocaleString('en-US')}`
-}
-
-function formatUsdFromLbpDetailed(amount, exchangeRate) {
-  const rate = Number(exchangeRate)
-
-  if (!Number.isFinite(rate) || rate <= 0) {
-    return '$0'
+    return '$0.00'
   }
 
   return `$${((Number(amount) || 0) / rate).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
+}
+
+function formatUsdFromLbpDetailed(amount, exchangeRate) {
+  return formatUsdFromLbp(amount, exchangeRate)
 }
 
 function getUsdAmountFromLbp(amount, exchangeRate) {
@@ -220,12 +220,24 @@ function getServiceName(service) {
   return String(service?.name || service?.service || service?.title || '').trim()
 }
 
+function getCustomerType(customer) {
+  return String(customer?.customer_type || 'normal').toLowerCase() === 'wholesale'
+    ? 'wholesale'
+    : 'normal'
+}
+
+function getCustomerTypeLabel(customer) {
+  return getCustomerType(customer) === 'wholesale' ? 'Wholesale' : 'Normal'
+}
+
 function getCustomerLabel(customer) {
   if (!customer) {
     return ''
   }
 
-  return `${customer.name || 'Unnamed'} - ${formatStoredPhone(customer.phone)}`
+  const typeLabel = getCustomerType(customer) === 'wholesale' ? ' - Wholesale' : ''
+
+  return `${customer.name || 'Unnamed'} - ${formatStoredPhone(customer.phone)}${typeLabel}`
 }
 
 function escapeCsv(value) {
@@ -683,19 +695,25 @@ function App() {
   const [customMonth, setCustomMonth] = useState(() => getMonthValue())
   const [newServiceName, setNewServiceName] = useState('')
   const [serviceError, setServiceError] = useState('')
+  const [serviceSuccess, setServiceSuccess] = useState('')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [customerNotes, setCustomerNotes] = useState('')
+  const [customerType, setCustomerType] = useState('normal')
   const [searchTerm, setSearchTerm] = useState('')
   const [formError, setFormError] = useState('')
+  const [customerSuccess, setCustomerSuccess] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [rechargeCustomerId, setRechargeCustomerId] = useState('')
   const [customerSelectorQuery, setCustomerSelectorQuery] = useState('')
   const [isCustomerSelectorOpen, setIsCustomerSelectorOpen] = useState(false)
+  const [activeServiceSelectorId, setActiveServiceSelectorId] = useState('')
+  const [serviceSearchTerm, setServiceSearchTerm] = useState('')
   const [rechargeService, setRechargeService] = useState('')
   const [rechargeAmount, setRechargeAmount] = useState('')
   const [rechargeNotes, setRechargeNotes] = useState('')
   const [rechargeError, setRechargeError] = useState('')
+  const [rechargeSuccess, setRechargeSuccess] = useState('')
   const [isRechargeSubmitting, setIsRechargeSubmitting] = useState(false)
   const [lastSelectedService, setLastSelectedService] = useState('')
   const [quickRechargeCustomerId, setQuickRechargeCustomerId] = useState('')
@@ -712,6 +730,7 @@ function App() {
   const [editCustomerName, setEditCustomerName] = useState('')
   const [editCustomerPhone, setEditCustomerPhone] = useState('')
   const [editCustomerNotes, setEditCustomerNotes] = useState('')
+  const [editCustomerType, setEditCustomerType] = useState('normal')
   const [customerEditError, setCustomerEditError] = useState('')
   const [isCustomerEditSubmitting, setIsCustomerEditSubmitting] = useState(false)
   const [deletingCustomerId, setDeletingCustomerId] = useState('')
@@ -788,6 +807,8 @@ function App() {
     setServices([])
     setRechargeCustomerId('')
     setCustomerSelectorQuery('')
+    setActiveServiceSelectorId('')
+    setServiceSearchTerm('')
     setQuickRechargeCustomerId('')
     setDetailCustomerId('')
     setIsStatementVisible(false)
@@ -921,6 +942,7 @@ function App() {
       const backupCustomers = customers.map((customer) => ({
         'Customer Name': customer.name || '',
         Phone: formatStoredPhone(customer.phone),
+        'Customer Type': getCustomerTypeLabel(customer),
         Notes: customer.notes || '',
         Active: formatBackupActive(customer.is_active),
         'Created Date': formatBackupDate(customer.created_at),
@@ -937,6 +959,7 @@ function App() {
           Date: formatBackupDate(recharge.created_at),
           'Customer Name': customer?.name || '',
           Phone: formatStoredPhone(customer?.phone),
+          'Customer Type': customer ? getCustomerTypeLabel(customer) : '',
           Service: cleanBackupServiceName(recharge.service),
           'Amount LBP': formatBackupLbp(amountLbp),
           'Amount USD': formatBackupUsd(amountLbp, exchangeRate),
@@ -1098,6 +1121,27 @@ function App() {
     }
   }, [session])
 
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return undefined
+    }
+
+    const closeServiceSelector = (event) => {
+      if (event.target?.closest?.('[data-service-selector]')) {
+        return
+      }
+
+      setActiveServiceSelectorId('')
+      setServiceSearchTerm('')
+    }
+
+    document.addEventListener('mousedown', closeServiceSelector)
+
+    return () => {
+      document.removeEventListener('mousedown', closeServiceSelector)
+    }
+  }, [])
+
   const serviceNames = services
     .map(getServiceName)
     .filter(Boolean)
@@ -1150,10 +1194,12 @@ function App() {
 
   async function handleCustomerSubmit(event) {
     event.preventDefault()
+    setCustomerSuccess('')
 
     const trimmedName = name.trim()
     const cleanPhone = cleanPhoneInput(phone)
     const trimmedNotes = customerNotes.trim()
+    const selectedCustomerType = customerType === 'wholesale' ? 'wholesale' : 'normal'
 
     if (!trimmedName) {
       setFormError('Please enter a customer name.')
@@ -1175,6 +1221,7 @@ function App() {
           name: trimmedName,
           phone: cleanPhone,
           notes: trimmedNotes || null,
+          customer_type: selectedCustomerType,
         }])
 
       if (error) {
@@ -1184,6 +1231,8 @@ function App() {
         setName('')
         setPhone('')
         setCustomerNotes('')
+        setCustomerType('normal')
+        setCustomerSuccess('Customer added successfully.')
         await fetchCustomers()
         customerNameInputRef.current?.focus()
       }
@@ -1194,6 +1243,7 @@ function App() {
 
   async function handleRechargeSubmit(event) {
     event.preventDefault()
+    setRechargeSuccess('')
 
     try {
       setIsRechargeSubmitting(true)
@@ -1215,6 +1265,7 @@ function App() {
         setCustomerSelectorQuery('')
         setRechargeAmount('')
         setRechargeNotes('')
+        setRechargeSuccess('Recharge added successfully.')
         await fetchRecharges()
         mainRechargeCustomerInputRef.current?.focus()
       }
@@ -1238,6 +1289,8 @@ function App() {
     setQuickRechargeAmount('')
     setQuickRechargeNotes('')
     setQuickRechargeError('')
+    setActiveServiceSelectorId('')
+    setServiceSearchTerm('')
   }
 
   function closeCustomerDetail() {
@@ -1250,9 +1303,10 @@ function App() {
     setIsStatementVisible(false)
   }
 
-  function openMobileCustomerEdit(customer) {
-    openCustomerDetail(customer.id)
-    startEditingCustomer(customer)
+  function openCustomerStatement(customerId) {
+    setDetailCustomerId(String(customerId))
+    setIsStatementVisible(true)
+    cancelEditingCustomer()
     setExpandedCustomerId('')
   }
 
@@ -1288,6 +1342,7 @@ function App() {
     setEditCustomerName(customer.name || '')
     setEditCustomerPhone(cleanPhoneInput(customer.phone))
     setEditCustomerNotes(customer.notes || '')
+    setEditCustomerType(getCustomerType(customer))
     setCustomerEditError('')
   }
 
@@ -1296,6 +1351,7 @@ function App() {
     setEditCustomerName('')
     setEditCustomerPhone('')
     setEditCustomerNotes('')
+    setEditCustomerType('normal')
     setCustomerEditError('')
   }
 
@@ -1305,6 +1361,7 @@ function App() {
     const trimmedName = editCustomerName.trim()
     const cleanPhone = cleanPhoneInput(editCustomerPhone)
     const trimmedNotes = editCustomerNotes.trim()
+    const selectedCustomerType = editCustomerType === 'wholesale' ? 'wholesale' : 'normal'
 
     if (!trimmedName) {
       setCustomerEditError('Please enter a customer name.')
@@ -1326,6 +1383,7 @@ function App() {
           name: trimmedName,
           phone: cleanPhone,
           notes: trimmedNotes || null,
+          customer_type: selectedCustomerType,
         })
         .eq('id', editingCustomerId)
 
@@ -1409,6 +1467,8 @@ function App() {
     setEditRechargeAmount(getThousandsFromLbp(recharge.amount))
     setEditRechargeNotes(recharge.notes || '')
     setEditRechargeStatus(recharge.status || 'unpaid')
+    setActiveServiceSelectorId('')
+    setServiceSearchTerm('')
   }
 
   function cancelEditingRecharge() {
@@ -1417,6 +1477,8 @@ function App() {
     setEditRechargeAmount('')
     setEditRechargeNotes('')
     setEditRechargeStatus('unpaid')
+    setActiveServiceSelectorId('')
+    setServiceSearchTerm('')
   }
 
   async function handleRechargeEditSubmit(event) {
@@ -1481,6 +1543,7 @@ function App() {
 
   async function handleAddService(event) {
     event.preventDefault()
+    setServiceSuccess('')
 
     const trimmedService = newServiceName.trim()
 
@@ -1508,6 +1571,7 @@ function App() {
     } else {
       setNewServiceName('')
       setServiceError('')
+      setServiceSuccess('Service added successfully.')
       setLastSelectedService(trimmedService)
       await fetchServices()
       serviceNameInputRef.current?.focus()
@@ -1551,6 +1615,7 @@ function App() {
       }
 
       setServiceError('')
+      setServiceSuccess('')
       await fetchServices()
     }
   }
@@ -1569,6 +1634,7 @@ function App() {
         'customer_id',
         'customer_name',
         'phone',
+        'customer_type',
         'service',
         'amount_lbp',
         'amount_usd',
@@ -1582,6 +1648,7 @@ function App() {
         '',
         customer.name || '',
         getPhoneDigits(customer.phone),
+        getCustomerType(customer),
         '',
         '',
         '',
@@ -1598,6 +1665,7 @@ function App() {
           recharge.customer_id || '',
           customer?.name || '',
           getPhoneDigits(customer?.phone),
+          customer ? getCustomerType(customer) : '',
           recharge.service || '',
           Math.round(Number(recharge.amount) || 0),
           formatUsdFromLbp(recharge.amount, exchangeRate).replace('$', ''),
@@ -1624,6 +1692,7 @@ function App() {
         'selected_period',
         'customer_name',
         'phone',
+        'customer_type',
         'total_unpaid_lbp',
         'total_unpaid_usd',
       ],
@@ -1631,6 +1700,7 @@ function App() {
         selectedMonthLabel,
         customer.name || '',
         getPhoneDigits(customer.phone),
+        getCustomerType(customer),
         Math.round(Number(balance) || 0),
         formatUsdFromLbpDetailed(balance, exchangeRate).replace('$', ''),
       ]),
@@ -1665,22 +1735,6 @@ function App() {
   const customersById = customers.reduce((lookup, customer) => {
     lookup[String(customer.id)] = customer
     return lookup
-  }, {})
-  const sortedAllRecharges = [...recharges].sort((firstRecharge, secondRecharge) => {
-    const firstDate = new Date(firstRecharge.created_at || 0).getTime()
-    const secondDate = new Date(secondRecharge.created_at || 0).getTime()
-
-    return secondDate - firstDate
-  })
-  const allRechargesByCustomer = sortedAllRecharges.reduce((groups, recharge) => {
-    const customerId = String(recharge.customer_id || '')
-
-    if (!groups[customerId]) {
-      groups[customerId] = []
-    }
-
-    groups[customerId].push(recharge)
-    return groups
   }, {})
   const visibleRecharges = recharges.filter((recharge) =>
     rechargeMatchesMonth(recharge, monthFilter, customMonth)
@@ -1745,7 +1799,9 @@ function App() {
   const sortedCustomers = [...customers].sort((firstCustomer, secondCustomer) =>
     String(firstCustomer.name || '').localeCompare(String(secondCustomer.name || ''))
   )
-  const filteredCustomers = sortedCustomers.filter((customer) => {
+  const normalCustomers = sortedCustomers.filter((customer) => getCustomerType(customer) === 'normal')
+  const wholesaleCustomers = sortedCustomers.filter((customer) => getCustomerType(customer) === 'wholesale')
+  const customerMatchesSearch = (customer) => {
     const customerName = String(customer.name || '').toLowerCase()
     const rawPhone = String(customer.phone || '').toLowerCase()
     const formattedPhone = formatStoredPhone(customer.phone).toLowerCase()
@@ -1757,7 +1813,9 @@ function App() {
       formattedPhone.includes(normalizedSearchTerm) ||
       (searchDigits && phoneDigits.includes(searchDigits))
     )
-  })
+  }
+  const filteredNormalCustomers = normalCustomers.filter(customerMatchesSearch)
+  const filteredWholesaleCustomers = wholesaleCustomers.filter(customerMatchesSearch)
   const monthSummaryCustomers = sortedCustomers
     .map((customer) => ({
       customer,
@@ -1778,35 +1836,95 @@ function App() {
       (selectorDigits && phoneDigits.includes(selectorDigits))
     )
   }).slice(0, 8)
-  const hasCustomers = customers.length > 0
-  const hasMatchingCustomers = filteredCustomers.length > 0
+  const normalUnpaid = normalCustomers.reduce(
+    (total, customer) => total + (unpaidBalances[String(customer.id)] || 0),
+    0
+  )
+  const wholesaleUnpaid = wholesaleCustomers.reduce(
+    (total, customer) => total + (unpaidBalances[String(customer.id)] || 0),
+    0
+  )
   const activePageLabel = mobilePages.find((page) => page.id === activePage)?.label || 'Dashboard'
   const detailCustomer = customersById[String(detailCustomerId)]
   const quickRechargeCustomer = customersById[String(quickRechargeCustomerId)]
 
-  function renderServiceSelect(value, onChange, includeExistingService = '') {
+  function renderServiceSelect(value, onChange, includeExistingService = '', selectorId = 'service') {
     const options = serviceNames.includes(includeExistingService) || !includeExistingService
       ? serviceNames
       : [includeExistingService, ...serviceNames]
+    const isSelectorOpen = activeServiceSelectorId === selectorId
+    const searchValue = isSelectorOpen ? serviceSearchTerm : ''
+    const normalizedServiceSearch = serviceSearchTerm.trim().toLowerCase()
+    const filteredServices = options.filter((service) =>
+      !normalizedServiceSearch ||
+      service.toLowerCase().includes(normalizedServiceSearch)
+    )
+
+    function chooseService(service) {
+      onChange(service)
+      setLastSelectedService(service)
+      setActiveServiceSelectorId('')
+      setServiceSearchTerm('')
+    }
 
     return (
-      <select
-        value={value}
-        onChange={(event) => {
-          onChange(event.target.value)
-          setLastSelectedService(event.target.value)
-        }}
-        style={styles.input}
-      >
-        {options.length === 0 && (
-          <option value="">Add a service first</option>
+      <div className="rt-service-selector" data-service-selector style={styles.selectorWrap}>
+        <input
+          type="search"
+          value={searchValue}
+          onFocus={() => {
+            setActiveServiceSelectorId(selectorId)
+            setServiceSearchTerm('')
+          }}
+          onChange={(event) => {
+            setActiveServiceSelectorId(selectorId)
+            setServiceSearchTerm(event.target.value)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setActiveServiceSelectorId('')
+              setServiceSearchTerm('')
+            }
+
+            if (event.key === 'Enter' && isSelectorOpen && filteredServices.length > 0) {
+              event.preventDefault()
+              chooseService(filteredServices[0])
+            }
+          }}
+          placeholder="Search or choose service"
+          style={styles.input}
+        />
+
+        {value && (
+          <p className="rt-service-selected" style={styles.selectedText}>
+            Selected service: {value}
+          </p>
         )}
-        {options.map((service) => (
-          <option key={service} value={service}>
-            {service}
-          </option>
-        ))}
-      </select>
+
+        {isSelectorOpen && (
+          <div className="rt-service-selector-list" style={styles.selectorList}>
+            {filteredServices.map((service) => (
+              <button
+                key={service}
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseService(service)}
+                style={styles.selectorOption}
+              >
+                {service}
+              </button>
+            ))}
+
+            {options.length === 0 && (
+              <p style={styles.empty}>Add a service first.</p>
+            )}
+
+            {options.length > 0 && filteredServices.length === 0 && (
+              <p style={styles.empty}>No services found.</p>
+            )}
+          </div>
+        )}
+      </div>
     )
   }
 
@@ -1834,7 +1952,7 @@ function App() {
               selectRechargeCustomer(filteredSelectorCustomers[0])
             }
           }}
-          placeholder="Type customer name or phone"
+          placeholder="Hanna or 03 123 456"
           style={styles.input}
         />
 
@@ -1917,7 +2035,8 @@ function App() {
           {renderServiceSelect(
             editRechargeService || preferredService,
             setEditRechargeService,
-            editRechargeService
+            editRechargeService,
+            'editRechargeService'
           )}
         </label>
         <label style={styles.field}>
@@ -1989,7 +2108,9 @@ function App() {
         <div className="rt-card-top" style={styles.cardTop}>
           <div>
             <p style={styles.historyTitle}>
-              {showCustomerName ? `${customer?.name || 'Unknown customer'} - ` : ''}
+              {showCustomerName
+                ? `${customer?.name || 'Unknown customer'}${customer && getCustomerType(customer) === 'wholesale' ? ' (Wholesale)' : ''} - `
+                : ''}
               {recharge.service || 'Recharge'}
             </p>
             <p style={styles.historyMeta}>
@@ -2178,6 +2299,16 @@ function App() {
         <section style={styles.section}>
           <div className="rt-dashboard-grid" style={styles.dashboardGrid}>
             <div className="rt-stat-card" style={styles.statCard}>
+              <p style={styles.statLabel}>Normal unpaid</p>
+              <p style={styles.statValue}>{formatLbp(normalUnpaid)}</p>
+              <p style={styles.historyMeta}>{formatUsdFromLbp(normalUnpaid, exchangeRate)}</p>
+            </div>
+            <div className="rt-stat-card" style={styles.statCard}>
+              <p style={styles.statLabel}>Wholesale unpaid</p>
+              <p style={styles.statValue}>{formatLbp(wholesaleUnpaid)}</p>
+              <p style={styles.historyMeta}>{formatUsdFromLbp(wholesaleUnpaid, exchangeRate)}</p>
+            </div>
+            <div className="rt-stat-card" style={styles.statCard}>
               <p style={styles.statLabel}>Total unpaid LBP</p>
               <p style={styles.statValue}>{formatLbp(totalUnpaid)}</p>
             </div>
@@ -2195,7 +2326,7 @@ function App() {
             </div>
             <div className="rt-stat-card" style={styles.statCard}>
               <p style={styles.statLabel}>Current exchange rate</p>
-              <p style={styles.statValue}>{formattedCurrentRate}</p>
+              <p style={styles.statValue}>1 USD = {formattedCurrentRate} LBP</p>
             </div>
           </div>
         </section>
@@ -2235,7 +2366,7 @@ function App() {
               type="text"
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Customer name"
+              placeholder="Hanna Saker"
               style={styles.input}
             />
           </label>
@@ -2253,16 +2384,32 @@ function App() {
           </label>
 
           <label style={styles.field}>
+            <span style={styles.label}>Customer Type</span>
+            <select
+              value={customerType}
+              onChange={(event) => setCustomerType(event.target.value)}
+              style={styles.input}
+            >
+              {customerTypes.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label style={styles.field}>
             <span style={styles.label}>Notes</span>
             <textarea
               value={customerNotes}
               onChange={(event) => setCustomerNotes(event.target.value)}
-              placeholder="Optional customer notes"
+              placeholder="Example: pays at end of month"
               style={styles.textarea}
             />
           </label>
 
           {formError && <p style={styles.error}>{formError}</p>}
+          {customerSuccess && <p className="rt-success-message">{customerSuccess}</p>}
 
           <button
             className="rt-submit-button"
@@ -2281,12 +2428,20 @@ function App() {
     )
   }
 
-  function renderCustomersPage() {
+  function renderCustomersPage(customerTypeFilter = 'normal') {
     const showRechargeDetails = normalizedSearchTerm.length > 0 || searchDigits.length > 0
+    const isWholesalePage = customerTypeFilter === 'wholesale'
+    const pageCustomers = isWholesalePage ? wholesaleCustomers : normalCustomers
+    const filteredPageCustomers = isWholesalePage ? filteredWholesaleCustomers : filteredNormalCustomers
+    const pageTitle = isWholesalePage ? 'Wholesale' : 'Customers & Balances'
+    const emptyMessage = isWholesalePage ? 'No wholesale customers yet.' : 'No customers yet.'
+    const noMatchMessage = isWholesalePage
+      ? 'No wholesale customers match your search.'
+      : 'No customers match your search.'
 
     return (
       <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>Customers & Balances</h2>
+          <h2 style={styles.sectionTitle}>{pageTitle}</h2>
           <div style={styles.listHeader}>
             <label style={styles.field}>
               <span style={styles.label}>Search customers</span>
@@ -2301,7 +2456,7 @@ function App() {
           </div>
 
           <div className="rt-list rt-customer-list" style={styles.list}>
-            {filteredCustomers.map((customer) => {
+            {filteredPageCustomers.map((customer) => {
               const customerBalance = unpaidBalances[String(customer.id)] || 0
               const customerRecharges = rechargesByCustomer[String(customer.id)] || []
               const hasUnpaidRecharges = unpaidRecharges.some(
@@ -2318,7 +2473,11 @@ function App() {
                   key={customer.id}
                   onClick={() => {
                     if (isMobileView) {
-                      setExpandedCustomerId(isExpandedCustomer ? '' : String(customer.id))
+                      if (isEditingCustomer) {
+                        return
+                      }
+
+                      openCustomerDetail(customer.id)
                       return
                     }
 
@@ -2407,7 +2566,7 @@ function App() {
 
                   {isEditingCustomer ? (
                     <form
-                      className="rt-panel rt-customer-extra"
+                      className="rt-panel rt-customer-extra rt-customer-edit-form"
                       onClick={(event) => event.stopPropagation()}
                       onSubmit={handleCustomerEditSubmit}
                       style={styles.editBox}
@@ -2430,6 +2589,20 @@ function App() {
                           maxLength="10"
                           style={styles.input}
                         />
+                      </label>
+                      <label style={styles.field}>
+                        <span style={styles.label}>Customer Type</span>
+                        <select
+                          value={editCustomerType}
+                          onChange={(event) => setEditCustomerType(event.target.value)}
+                          style={styles.input}
+                        >
+                          {customerTypes.map((type) => (
+                            <option key={type.value} value={type.value}>
+                              {type.label}
+                            </option>
+                          ))}
+                        </select>
                       </label>
                       <label style={styles.field}>
                         <span style={styles.label}>Notes</span>
@@ -2482,9 +2655,24 @@ function App() {
                           >
                             {isPayingCustomer ? 'Updating...' : 'Mark All as Paid'}
                           </button>
+                          {isMobileView && (
+                            <button
+                              type="button"
+                              onClick={() => openCustomerStatement(customer.id)}
+                              style={styles.quietButton}
+                            >
+                              Generate Statement
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => (isMobileView ? openMobileCustomerEdit(customer) : startEditingCustomer(customer))}
+                            onClick={() => {
+                              if (isMobileView) {
+                                setExpandedCustomerId(String(customer.id))
+                              }
+
+                              startEditingCustomer(customer)
+                            }}
                             style={styles.quietButton}
                           >
                             Edit Customer
@@ -2508,12 +2696,12 @@ function App() {
               )
             })}
 
-            {!hasCustomers && (
-              <p style={styles.empty}>No customers yet.</p>
+            {pageCustomers.length === 0 && (
+              <p style={styles.empty}>{emptyMessage}</p>
             )}
 
-            {hasCustomers && !hasMatchingCustomers && (
-              <p style={styles.empty}>No customers match your search.</p>
+            {pageCustomers.length > 0 && filteredPageCustomers.length === 0 && (
+              <p style={styles.empty}>{noMatchMessage}</p>
             )}
           </div>
         </section>
@@ -2531,7 +2719,7 @@ function App() {
 
           <label style={styles.field}>
             <span style={styles.label}>Service</span>
-            {renderServiceSelect(selectedRechargeService, setRechargeService)}
+            {renderServiceSelect(selectedRechargeService, setRechargeService, '', 'addRechargeService')}
           </label>
 
           <label style={styles.field}>
@@ -2552,12 +2740,13 @@ function App() {
             <textarea
               value={rechargeNotes}
               onChange={(event) => setRechargeNotes(event.target.value)}
-              placeholder="Optional recharge notes"
+              placeholder="Example: May Alfa recharge"
               style={styles.textarea}
             />
           </label>
 
           {rechargeError && <p style={styles.error}>{rechargeError}</p>}
+          {rechargeSuccess && <p className="rt-success-message">{rechargeSuccess}</p>}
 
           <button
             className="rt-submit-button"
@@ -2607,11 +2796,12 @@ function App() {
                 type="text"
                 value={newServiceName}
                 onChange={(event) => setNewServiceName(event.target.value)}
-                placeholder="Example: Touch 10GB"
+                placeholder="Example: Touch weekly bundle"
                 style={styles.input}
               />
             </label>
             {serviceError && <p style={styles.error}>{serviceError}</p>}
+            {serviceSuccess && <p className="rt-success-message">{serviceSuccess}</p>}
             <button className="rt-submit-button" type="submit" style={{ ...styles.button, justifySelf: 'start' }}>
               Add service
             </button>
@@ -2659,7 +2849,11 @@ function App() {
     }
 
     if (activePage === 'customers') {
-      return renderCustomersPage()
+      return renderCustomersPage('normal')
+    }
+
+    if (activePage === 'wholesale') {
+      return renderCustomersPage('wholesale')
     }
 
     if (activePage === 'addRecharge') {
@@ -2683,22 +2877,55 @@ function App() {
     }
 
     return (
-      <div className="rt-overlay" style={styles.overlay}>
-        <form className="rt-modal" onSubmit={handleQuickRechargeSubmit} style={styles.modal}>
-          <div className="rt-card-top" style={styles.cardTop}>
+      <div className="rt-overlay rt-quick-overlay" style={styles.overlay}>
+        <form className="rt-modal rt-quick-recharge-modal" onSubmit={handleQuickRechargeSubmit} style={styles.modal}>
+          <div className="rt-card-top rt-quick-header" style={styles.cardTop}>
             <div>
-              <h2 style={styles.sectionTitle}>Quick Recharge</h2>
-              <p style={styles.phone}>{getCustomerLabel(quickRechargeCustomer)}</p>
+              <h2 className="rt-quick-title" style={styles.sectionTitle}>Quick Recharge</h2>
+              <p className="rt-quick-customer rt-quick-customer-desktop" style={styles.phone}>
+                {getCustomerLabel(quickRechargeCustomer)}
+              </p>
+              <div className="rt-quick-customer-mobile">
+                <p>{quickRechargeCustomer.name || 'Customer'}</p>
+                <p>{formatStoredPhone(quickRechargeCustomer.phone)}</p>
+              </div>
             </div>
-            <button type="button" onClick={closeQuickRecharge} style={styles.quietButton}>
+            <button
+              className="rt-quick-close-mobile"
+              type="button"
+              aria-label="Close quick recharge"
+              onClick={closeQuickRecharge}
+              style={styles.quietButton}
+            >
+              X
+            </button>
+            <button
+              className="rt-quick-close-desktop"
+              type="button"
+              onClick={closeQuickRecharge}
+              style={styles.quietButton}
+            >
               Close
             </button>
           </div>
 
           <label style={styles.field}>
             <span style={styles.label}>Service</span>
-            {renderServiceSelect(selectedQuickRechargeService, setQuickRechargeService)}
+            {renderServiceSelect(selectedQuickRechargeService, setQuickRechargeService, '', 'quickRechargeService')}
           </label>
+
+          <div className="rt-quick-amount-buttons">
+            {[500, 1000, 1500, 1800].map((amount) => (
+              <button
+                key={amount}
+                type="button"
+                onClick={() => setQuickRechargeAmount(String(amount))}
+                style={styles.quietButton}
+              >
+                {amount}
+              </button>
+            ))}
+          </div>
 
           <label style={styles.field}>
             <span style={styles.label}>Amount (in thousands LBP)</span>
@@ -2719,7 +2946,7 @@ function App() {
             <textarea
               value={quickRechargeNotes}
               onChange={(event) => setQuickRechargeNotes(event.target.value)}
-              placeholder="Optional notes"
+              placeholder="Example: quick Alfa recharge"
               style={styles.textarea}
             />
           </label>
@@ -2727,6 +2954,7 @@ function App() {
           {quickRechargeError && <p style={styles.error}>{quickRechargeError}</p>}
 
           <button
+            className="rt-quick-submit"
             type="submit"
             disabled={isQuickRechargeSubmitDisabled}
             style={{
@@ -2747,11 +2975,7 @@ function App() {
       return null
     }
 
-    const customerRecharges = (
-      isMobileView
-        ? allRechargesByCustomer[String(detailCustomer.id)]
-        : rechargesByCustomer[String(detailCustomer.id)]
-    ) || []
+    const customerRecharges = rechargesByCustomer[String(detailCustomer.id)] || []
     const customerBalance = unpaidBalances[String(detailCustomer.id)] || 0
     const hasUnpaidRecharges = unpaidRecharges.some(
       (recharge) => String(recharge.customer_id) === String(detailCustomer.id)
@@ -2783,6 +3007,235 @@ function App() {
       '',
       `Total: ${formatLbp(statementTotal)} (${formatUsdFromLbpDetailed(statementTotal, exchangeRate)})`,
     ].join('\n')
+    const statementContent = isStatementVisible && (
+      <div className="rt-detail-statement" style={styles.statementBox}>
+        <div>
+          <h2 style={styles.sectionTitle}>Customer Statement</h2>
+          <p style={styles.customerName}>{detailCustomer.name}</p>
+        </div>
+
+        <div className="rt-list" style={styles.list}>
+          {unpaidCustomerRecharges.map((recharge) => {
+            const formattedDate = recharge.created_at
+              ? new Date(recharge.created_at).toLocaleDateString()
+              : 'No date'
+
+            return (
+              <div className="rt-recharge-preview" key={recharge.id} style={styles.rechargePreview}>
+                <p style={styles.historyTitle}>
+                  {formattedDate} - {recharge.service || 'Recharge'}
+                </p>
+                <p style={styles.unpaidText}>{formatLbp(recharge.amount)}</p>
+              </div>
+            )
+          })}
+
+          {unpaidCustomerRecharges.length === 0 && (
+            <p style={styles.empty}>No unpaid recharges.</p>
+          )}
+        </div>
+
+        <p style={styles.unpaidText}>
+          Total unpaid: {formatLbp(statementTotal)} / {formatUsdFromLbpDetailed(statementTotal, exchangeRate)}
+        </p>
+
+        <pre style={styles.messageBox}>{whatsappMessage}</pre>
+
+        <div className="rt-actions" style={styles.actions}>
+          <button
+            type="button"
+            onClick={() => copyWhatsAppMessage(whatsappMessage)}
+            style={styles.smallButton}
+          >
+            Copy Message
+          </button>
+          <button
+            type="button"
+            onClick={() => sendWhatsAppMessage(detailCustomer, whatsappMessage)}
+            style={styles.quietButton}
+          >
+            Send via WhatsApp
+          </button>
+        </div>
+      </div>
+    )
+    const editCustomerForm = isEditingDetailCustomer && (
+      <form
+        className="rt-mobile-only rt-mobile-detail-edit"
+        onSubmit={handleCustomerEditSubmit}
+        style={styles.editBox}
+      >
+        <label style={styles.field}>
+          <span style={styles.label}>Name</span>
+          <input
+            type="text"
+            value={editCustomerName}
+            onChange={(event) => setEditCustomerName(event.target.value)}
+            style={styles.input}
+          />
+        </label>
+        <label style={styles.field}>
+          <span style={styles.label}>Phone</span>
+          <input
+            type="tel"
+            value={formatPhoneInput(editCustomerPhone)}
+            onChange={(event) => setEditCustomerPhone(cleanPhoneInput(event.target.value))}
+            maxLength="10"
+            style={styles.input}
+          />
+        </label>
+        <label style={styles.field}>
+          <span style={styles.label}>Customer Type</span>
+          <select
+            value={editCustomerType}
+            onChange={(event) => setEditCustomerType(event.target.value)}
+            style={styles.input}
+          >
+            {customerTypes.map((type) => (
+              <option key={type.value} value={type.value}>
+                {type.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label style={styles.field}>
+          <span style={styles.label}>Notes</span>
+          <textarea
+            value={editCustomerNotes}
+            onChange={(event) => setEditCustomerNotes(event.target.value)}
+            style={styles.textarea}
+          />
+        </label>
+        {customerEditError && <p style={styles.error}>{customerEditError}</p>}
+        <div className="rt-actions" style={styles.actions}>
+          <button
+            type="submit"
+            disabled={isCustomerEditSubmitting}
+            style={{
+              ...styles.smallButton,
+              opacity: isCustomerEditSubmitting ? 0.6 : 1,
+            }}
+          >
+            {isCustomerEditSubmitting ? 'Saving...' : 'Save customer'}
+          </button>
+          <button
+            type="button"
+            onClick={cancelEditingCustomer}
+            style={styles.quietButton}
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    )
+
+    if (isMobileView) {
+      return (
+        <div className="rt-overlay rt-detail-overlay" style={styles.overlay}>
+          <div className="rt-modal rt-detail-modal" style={styles.modal}>
+            <div className="rt-detail-top">
+              <div>
+                <h2 style={styles.sectionTitle}>{detailCustomer.name}</h2>
+                <p style={styles.phone}>{formatStoredPhone(detailCustomer.phone)}</p>
+                <p style={hasUnpaidRecharges ? styles.unpaidText : styles.balance}>
+                  Total unpaid: {formatLbp(customerBalance)} / {formatUsdFromLbp(customerBalance, exchangeRate)}
+                </p>
+                <p style={styles.historyMeta}>Showing recharges for: {selectedMonthLabel}</p>
+              </div>
+              <button
+                className="rt-detail-close-mobile"
+                type="button"
+                aria-label="Close customer details"
+                onClick={() => {
+                  cancelEditingCustomer()
+                  closeCustomerDetail()
+                }}
+                style={styles.quietButton}
+              >
+                X
+              </button>
+            </div>
+
+            {detailCustomer.notes && (
+              <p style={styles.notes}>Notes: {detailCustomer.notes}</p>
+            )}
+
+            <section className="rt-detail-section">
+              <h2 style={styles.sectionTitle}>Actions</h2>
+              <div className="rt-actions rt-detail-primary-actions" style={styles.actions}>
+                <button
+                  type="button"
+                  disabled={!hasUnpaidRecharges || isPayingCustomer}
+                  onClick={() => handleMarkAllPaid(detailCustomer.id)}
+                  style={{
+                    ...styles.smallButton,
+                    opacity: !hasUnpaidRecharges || isPayingCustomer ? 0.6 : 1,
+                  }}
+                >
+                  {isPayingCustomer ? 'Updating...' : 'Mark All as Paid'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openQuickRecharge(detailCustomer.id)}
+                  style={styles.quietButton}
+                >
+                  + Recharge
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsStatementVisible(true)}
+                  style={styles.quietButton}
+                >
+                  Generate Statement
+                </button>
+              </div>
+            </section>
+
+            {statementContent}
+
+            <section className="rt-detail-section">
+              <h2 style={styles.sectionTitle}>Recharge History</h2>
+              <p style={styles.historyMeta}>Showing recharges for: {selectedMonthLabel}</p>
+              <div className="rt-list" style={styles.list}>
+                {customerRecharges.map((recharge) => renderRechargeCard(recharge, false))}
+
+                {customerRecharges.length === 0 && (
+                  <p style={styles.empty}>No recharges for this customer.</p>
+                )}
+              </div>
+            </section>
+
+            <section className="rt-detail-section rt-detail-edit-section">
+              <h2 style={styles.sectionTitle}>Edit Customer</h2>
+              {isEditingDetailCustomer ? (
+                editCustomerForm
+              ) : (
+                <div className="rt-actions" style={styles.actions}>
+                  <button
+                    type="button"
+                    onClick={() => startEditingCustomer(detailCustomer)}
+                    style={styles.quietButton}
+                  >
+                    Edit Customer
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDeletingDetailCustomer}
+                    onClick={() => handleDeleteCustomer(detailCustomer.id)}
+                    style={{
+                      ...styles.dangerButton,
+                      opacity: isDeletingDetailCustomer ? 0.6 : 1,
+                    }}
+                  >
+                    {isDeletingDetailCustomer ? 'Deleting...' : 'Delete Customer'}
+                  </button>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      )
+    }
 
     return (
       <div className="rt-overlay" style={styles.overlay}>
@@ -2856,114 +3309,9 @@ function App() {
             </button>
           </div>
 
-          {isEditingDetailCustomer && (
-            <form
-              className="rt-mobile-only rt-mobile-detail-edit"
-              onSubmit={handleCustomerEditSubmit}
-              style={styles.editBox}
-            >
-              <label style={styles.field}>
-                <span style={styles.label}>Name</span>
-                <input
-                  type="text"
-                  value={editCustomerName}
-                  onChange={(event) => setEditCustomerName(event.target.value)}
-                  style={styles.input}
-                />
-              </label>
-              <label style={styles.field}>
-                <span style={styles.label}>Phone</span>
-                <input
-                  type="tel"
-                  value={formatPhoneInput(editCustomerPhone)}
-                  onChange={(event) => setEditCustomerPhone(cleanPhoneInput(event.target.value))}
-                  maxLength="10"
-                  style={styles.input}
-                />
-              </label>
-              <label style={styles.field}>
-                <span style={styles.label}>Notes</span>
-                <textarea
-                  value={editCustomerNotes}
-                  onChange={(event) => setEditCustomerNotes(event.target.value)}
-                  style={styles.textarea}
-                />
-              </label>
-              {customerEditError && <p style={styles.error}>{customerEditError}</p>}
-              <div className="rt-actions" style={styles.actions}>
-                <button
-                  type="submit"
-                  disabled={isCustomerEditSubmitting}
-                  style={{
-                    ...styles.smallButton,
-                    opacity: isCustomerEditSubmitting ? 0.6 : 1,
-                  }}
-                >
-                  {isCustomerEditSubmitting ? 'Saving...' : 'Save customer'}
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelEditingCustomer}
-                  style={styles.quietButton}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          )}
+          {editCustomerForm}
 
-          {isStatementVisible && (
-            <div style={styles.statementBox}>
-              <div>
-                <h2 style={styles.sectionTitle}>Customer Statement</h2>
-                <p style={styles.customerName}>{detailCustomer.name}</p>
-              </div>
-
-              <div className="rt-list" style={styles.list}>
-                {unpaidCustomerRecharges.map((recharge) => {
-                  const formattedDate = recharge.created_at
-                    ? new Date(recharge.created_at).toLocaleDateString()
-                    : 'No date'
-
-                  return (
-                    <div className="rt-recharge-preview" key={recharge.id} style={styles.rechargePreview}>
-                      <p style={styles.historyTitle}>
-                        {formattedDate} - {recharge.service || 'Recharge'}
-                      </p>
-                      <p style={styles.unpaidText}>{formatLbp(recharge.amount)}</p>
-                    </div>
-                  )
-                })}
-
-                {unpaidCustomerRecharges.length === 0 && (
-                  <p style={styles.empty}>No unpaid recharges.</p>
-                )}
-              </div>
-
-              <p style={styles.unpaidText}>
-                Total unpaid: {formatLbp(statementTotal)} / {formatUsdFromLbpDetailed(statementTotal, exchangeRate)}
-              </p>
-
-              <pre style={styles.messageBox}>{whatsappMessage}</pre>
-
-              <div className="rt-actions" style={styles.actions}>
-                <button
-                  type="button"
-                  onClick={() => copyWhatsAppMessage(whatsappMessage)}
-                  style={styles.smallButton}
-                >
-                  Copy Message
-                </button>
-                <button
-                  type="button"
-                  onClick={() => sendWhatsAppMessage(detailCustomer, whatsappMessage)}
-                  style={styles.quietButton}
-                >
-                  Send via WhatsApp
-                </button>
-              </div>
-            </div>
-          )}
+          {statementContent}
 
           <div className="rt-list" style={styles.list}>
             {customerRecharges.map((recharge) => renderRechargeCard(recharge, false))}
@@ -3194,7 +3542,9 @@ function App() {
           </button>
         </header>
 
-        {renderActivePage()}
+        <div className="rt-page-body" key={activePage}>
+          {renderActivePage()}
+        </div>
       </main>
 
       <button
