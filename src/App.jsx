@@ -217,6 +217,41 @@ function getThousandsFromLbp(amount) {
   return String((Number(amount) || 0) / 1000)
 }
 
+function cleanLbpAmountInput(value) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function getRechargeAmount(recharge) {
+  return Math.round(Number(recharge?.amount) || 0)
+}
+
+function getRechargePaidAmount(recharge) {
+  const amount = getRechargeAmount(recharge)
+  const paidAmount = Math.round(Number(recharge?.paid_amount) || 0)
+
+  return Math.min(Math.max(paidAmount, 0), amount)
+}
+
+function getRechargeBalance(recharge) {
+  if (String(recharge?.status || '').toLowerCase() === 'paid') {
+    return 0
+  }
+
+  return Math.max(getRechargeAmount(recharge) - getRechargePaidAmount(recharge), 0)
+}
+
+function appendPaymentNote(existingNotes, paymentNote, appliedAmount) {
+  const trimmedNote = String(paymentNote || '').trim()
+
+  if (!trimmedNote) {
+    return existingNotes || null
+  }
+
+  const paymentLine = `Payment: ${formatLbp(appliedAmount)} - ${trimmedNote}`
+
+  return existingNotes ? `${existingNotes}\n${paymentLine}` : paymentLine
+}
+
 function getServiceName(service) {
   return String(service?.name || service?.service || service?.title || '').trim()
 }
@@ -662,6 +697,7 @@ function App() {
   const customerNameInputRef = useRef(null)
   const mainRechargeCustomerInputRef = useRef(null)
   const quickRechargeAmountInputRef = useRef(null)
+  const recordPaymentAmountInputRef = useRef(null)
   const serviceNameInputRef = useRef(null)
 
   const [session, setSession] = useState(null)
@@ -723,6 +759,11 @@ function App() {
   const [quickRechargeNotes, setQuickRechargeNotes] = useState('')
   const [quickRechargeError, setQuickRechargeError] = useState('')
   const [isQuickRechargeSubmitting, setIsQuickRechargeSubmitting] = useState(false)
+  const [recordPaymentCustomerId, setRecordPaymentCustomerId] = useState('')
+  const [recordPaymentAmount, setRecordPaymentAmount] = useState('')
+  const [recordPaymentNotes, setRecordPaymentNotes] = useState('')
+  const [recordPaymentError, setRecordPaymentError] = useState('')
+  const [isRecordingPayment, setIsRecordingPayment] = useState(false)
   const [detailCustomerId, setDetailCustomerId] = useState('')
   const [isStatementVisible, setIsStatementVisible] = useState(false)
   const [payingRechargeId, setPayingRechargeId] = useState('')
@@ -811,6 +852,7 @@ function App() {
     setActiveServiceSelectorId('')
     setServiceSearchTerm('')
     setQuickRechargeCustomerId('')
+    setRecordPaymentCustomerId('')
     setDetailCustomerId('')
     setIsStatementVisible(false)
     setExpandedCustomerId('')
@@ -954,7 +996,9 @@ function App() {
       }, {})
       const backupRecharges = recharges.map((recharge) => {
         const customer = backupCustomersById[String(recharge.customer_id)]
-        const amountLbp = Math.round(Number(recharge.amount) || 0)
+        const amountLbp = getRechargeAmount(recharge)
+        const paidAmountLbp = getRechargePaidAmount(recharge)
+        const remainingLbp = getRechargeBalance(recharge)
 
         return {
           Date: formatBackupDate(recharge.created_at),
@@ -964,6 +1008,9 @@ function App() {
           Service: cleanBackupServiceName(recharge.service),
           'Amount LBP': formatBackupLbp(amountLbp),
           'Amount USD': formatBackupUsd(amountLbp, exchangeRate),
+          'Paid LBP': formatBackupLbp(paidAmountLbp),
+          'Remaining LBP': formatBackupLbp(remainingLbp),
+          'Remaining USD': formatBackupUsd(remainingLbp, exchangeRate),
           Status: recharge.status || '',
           Notes: recharge.notes || '',
         }
@@ -1151,6 +1198,14 @@ function App() {
     quickRechargeAmountInputRef.current?.focus()
   }, [quickRechargeCustomerId])
 
+  useEffect(() => {
+    if (!recordPaymentCustomerId) {
+      return
+    }
+
+    recordPaymentAmountInputRef.current?.focus()
+  }, [recordPaymentCustomerId])
+
   const serviceNames = useMemo(() => (
     services
       .map(getServiceName)
@@ -1202,6 +1257,7 @@ function App() {
         customer_id: customerId,
         service: cleanService,
         amount: parsedAmount * 1000,
+        paid_amount: 0,
         notes: notes.trim() || null,
         status: 'unpaid',
       }])
@@ -1307,6 +1363,20 @@ function App() {
     setServiceSearchTerm('')
   }, [])
 
+  const openRecordPayment = useCallback((customerId) => {
+    setRecordPaymentCustomerId(String(customerId))
+    setRecordPaymentAmount('')
+    setRecordPaymentNotes('')
+    setRecordPaymentError('')
+  }, [])
+
+  const closeRecordPayment = useCallback(() => {
+    setRecordPaymentCustomerId('')
+    setRecordPaymentAmount('')
+    setRecordPaymentNotes('')
+    setRecordPaymentError('')
+  }, [])
+
   function closeCustomerDetail() {
     setDetailCustomerId('')
     setIsStatementVisible(false)
@@ -1348,6 +1418,107 @@ function App() {
       }
     } finally {
       setIsQuickRechargeSubmitting(false)
+    }
+  }
+
+  async function handleRecordPaymentSubmit(event) {
+    event.preventDefault()
+
+    const paymentAmount = Number(cleanLbpAmountInput(recordPaymentAmount))
+    const trimmedNotes = recordPaymentNotes.trim()
+
+    if (!recordPaymentCustomerId || !Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      setRecordPaymentError('Please enter a valid payment amount in LBP.')
+      return
+    }
+
+    const customerOpenRecharges = recharges
+      .filter((recharge) => String(recharge.customer_id) === String(recordPaymentCustomerId))
+      .filter((recharge) => rechargeMatchesMonth(recharge, monthFilter, customMonth))
+      .filter((recharge) => getRechargeBalance(recharge) > 0)
+      .sort((firstRecharge, secondRecharge) => {
+        const firstDate = new Date(firstRecharge.created_at || 0).getTime()
+        const secondDate = new Date(secondRecharge.created_at || 0).getTime()
+
+        return firstDate - secondDate
+      })
+    const currentBalance = customerOpenRecharges.reduce(
+      (total, recharge) => total + getRechargeBalance(recharge),
+      0
+    )
+
+    if (currentBalance <= 0) {
+      setRecordPaymentError('This customer has no unpaid balance for the selected period.')
+      return
+    }
+
+    let remainingPayment = Math.min(paymentAmount, currentBalance)
+    const rechargeUpdates = []
+
+    for (const recharge of customerOpenRecharges) {
+      if (remainingPayment <= 0) {
+        break
+      }
+
+      const rechargeAmount = getRechargeAmount(recharge)
+      const currentPaidAmount = getRechargePaidAmount(recharge)
+      const rechargeBalance = getRechargeBalance(recharge)
+      const appliedAmount = Math.min(rechargeBalance, remainingPayment)
+      const nextPaidAmount = Math.min(currentPaidAmount + appliedAmount, rechargeAmount)
+      const nextStatus = nextPaidAmount >= rechargeAmount ? 'paid' : 'unpaid'
+      const updateData = {
+        paid_amount: nextPaidAmount,
+        status: nextStatus,
+      }
+
+      if (trimmedNotes) {
+        updateData.notes = appendPaymentNote(recharge.notes, trimmedNotes, appliedAmount)
+      }
+
+      rechargeUpdates.push({
+        id: recharge.id,
+        data: updateData,
+      })
+
+      remainingPayment -= appliedAmount
+    }
+
+    try {
+      setIsRecordingPayment(true)
+      setRecordPaymentError('')
+
+      const results = await Promise.all(
+        rechargeUpdates.map((update) => (
+          supabase
+            .from('recharges')
+            .update(update.data)
+            .eq('id', update.id)
+        ))
+      )
+      const failedResult = results.find((result) => result.error)
+
+      if (failedResult?.error) {
+        throw failedResult.error
+      }
+
+      const updatesById = Object.fromEntries(
+        rechargeUpdates.map((update) => [String(update.id), update.data])
+      )
+
+      setRecharges((currentRecharges) => (
+        currentRecharges.map((recharge) => {
+          const updateData = updatesById[String(recharge.id)]
+
+          return updateData ? { ...recharge, ...updateData } : recharge
+        })
+      ))
+      closeRecordPayment()
+      fetchRecharges()
+    } catch (error) {
+      console.log('Error recording payment:', error)
+      setRecordPaymentError(error.message || 'Could not record payment.')
+    } finally {
+      setIsRecordingPayment(false)
     }
   }
 
@@ -1437,43 +1608,87 @@ function App() {
   }, [refreshData])
 
   const handleMarkRechargePaid = useCallback(async (rechargeId) => {
+    const recharge = recharges.find((currentRecharge) => String(currentRecharge.id) === String(rechargeId))
+    const paidAmount = getRechargeAmount(recharge)
+
     try {
       setPayingRechargeId(String(rechargeId))
 
       const { error } = await supabase
         .from('recharges')
-        .update({ status: 'paid' })
+        .update({
+          status: 'paid',
+          paid_amount: paidAmount,
+        })
         .eq('id', rechargeId)
 
       if (error) {
         console.log('Error marking recharge as paid:', error)
       } else {
-        await fetchRecharges()
+        setRecharges((currentRecharges) => (
+          currentRecharges.map((currentRecharge) => (
+            String(currentRecharge.id) === String(rechargeId)
+              ? { ...currentRecharge, status: 'paid', paid_amount: paidAmount }
+              : currentRecharge
+          ))
+        ))
+        fetchRecharges()
       }
     } finally {
       setPayingRechargeId('')
     }
-  }, [fetchRecharges])
+  }, [fetchRecharges, recharges])
 
   const handleMarkAllPaid = useCallback(async (customerId) => {
+    const customerOpenRecharges = recharges.filter((recharge) => (
+      String(recharge.customer_id) === String(customerId) &&
+      getRechargeBalance(recharge) > 0
+    ))
+    const rechargeUpdates = customerOpenRecharges.map((recharge) => ({
+      id: recharge.id,
+      data: {
+        status: 'paid',
+        paid_amount: getRechargeAmount(recharge),
+      },
+    }))
+
+    if (rechargeUpdates.length === 0) {
+      return
+    }
+
     try {
       setPayingCustomerId(String(customerId))
 
-      const { error } = await supabase
-        .from('recharges')
-        .update({ status: 'paid' })
-        .eq('customer_id', customerId)
-        .eq('status', 'unpaid')
+      const results = await Promise.all(
+        rechargeUpdates.map((update) => (
+          supabase
+            .from('recharges')
+            .update(update.data)
+            .eq('id', update.id)
+        ))
+      )
+      const failedResult = results.find((result) => result.error)
 
-      if (error) {
-        console.log('Error marking all customer recharges as paid:', error)
+      if (failedResult?.error) {
+        console.log('Error marking all customer recharges as paid:', failedResult.error)
       } else {
-        await fetchRecharges()
+        const updatesById = Object.fromEntries(
+          rechargeUpdates.map((update) => [String(update.id), update.data])
+        )
+
+        setRecharges((currentRecharges) => (
+          currentRecharges.map((recharge) => {
+            const updateData = updatesById[String(recharge.id)]
+
+            return updateData ? { ...recharge, ...updateData } : recharge
+          })
+        ))
+        fetchRecharges()
       }
     } finally {
       setPayingCustomerId('')
     }
-  }, [fetchRecharges])
+  }, [fetchRecharges, recharges])
 
   const startEditingRecharge = useCallback((recharge) => {
     setEditingRechargeId(String(recharge.id))
@@ -1501,6 +1716,12 @@ function App() {
     const parsedAmount = Number(editRechargeAmount)
     const cleanService = editRechargeService || preferredService
     const trimmedNotes = editRechargeNotes.trim()
+    const nextAmount = parsedAmount * 1000
+    const currentRecharge = recharges.find((recharge) => String(recharge.id) === String(editingRechargeId))
+    const nextPaidAmount = editRechargeStatus === 'paid'
+      ? nextAmount
+      : Math.min(getRechargePaidAmount(currentRecharge), nextAmount)
+    const nextStatus = nextPaidAmount >= nextAmount ? 'paid' : editRechargeStatus
 
     if (!cleanService || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       console.log('Error editing recharge: service and a valid amount are required.')
@@ -1514,9 +1735,10 @@ function App() {
         .from('recharges')
         .update({
           service: cleanService,
-          amount: parsedAmount * 1000,
+          amount: nextAmount,
+          paid_amount: nextPaidAmount,
           notes: trimmedNotes || null,
-          status: editRechargeStatus,
+          status: nextStatus,
         })
         .eq('id', editingRechargeId)
 
@@ -1652,6 +1874,9 @@ function App() {
         'service',
         'amount_lbp',
         'amount_usd',
+        'paid_amount_lbp',
+        'remaining_lbp',
+        'remaining_usd',
         'status',
         'notes',
         'created_at',
@@ -1667,11 +1892,17 @@ function App() {
         '',
         '',
         '',
+        '',
+        '',
+        '',
         customer.notes || '',
         customer.created_at || '',
       ]),
       ...recharges.map((recharge) => {
         const customer = customersById[String(recharge.customer_id)]
+        const amountLbp = getRechargeAmount(recharge)
+        const paidAmountLbp = getRechargePaidAmount(recharge)
+        const remainingLbp = getRechargeBalance(recharge)
 
         return [
           'recharge',
@@ -1681,8 +1912,11 @@ function App() {
           getPhoneDigits(customer?.phone),
           customer ? getCustomerType(customer) : '',
           recharge.service || '',
-          Math.round(Number(recharge.amount) || 0),
-          formatUsdFromLbp(recharge.amount, exchangeRate).replace('$', ''),
+          amountLbp,
+          formatUsdFromLbp(amountLbp, exchangeRate).replace('$', ''),
+          paidAmountLbp,
+          remainingLbp,
+          formatUsdFromLbp(remainingLbp, exchangeRate).replace('$', ''),
           recharge.status || '',
           recharge.notes || '',
           recharge.created_at || '',
@@ -1762,9 +1996,7 @@ function App() {
     })
   ), [visibleRecharges])
   const unpaidRecharges = useMemo(() => (
-    visibleRecharges.filter(
-      (recharge) => String(recharge.status || '').toLowerCase() === 'unpaid'
-    )
+    visibleRecharges.filter((recharge) => getRechargeBalance(recharge) > 0)
   ), [visibleRecharges])
   const unpaidCustomerIds = useMemo(() => (
     new Set(unpaidRecharges.map((recharge) => String(recharge.customer_id || '')))
@@ -1772,7 +2004,7 @@ function App() {
   const unpaidBalances = useMemo(() => (
     unpaidRecharges.reduce((balances, recharge) => {
       const customerId = String(recharge.customer_id || '')
-      const amount = Number(recharge.amount) || 0
+      const amount = getRechargeBalance(recharge)
 
       balances[customerId] = (balances[customerId] || 0) + amount
       return balances
@@ -1820,6 +2052,13 @@ function App() {
     !selectedQuickRechargeService ||
     !Number.isFinite(quickRechargeAmountNumber) ||
     quickRechargeAmountNumber <= 0
+  )
+  const recordPaymentAmountNumber = Number(cleanLbpAmountInput(recordPaymentAmount))
+  const isRecordPaymentSubmitDisabled = (
+    isRecordingPayment ||
+    !recordPaymentCustomerId ||
+    !Number.isFinite(recordPaymentAmountNumber) ||
+    recordPaymentAmountNumber <= 0
   )
   const normalizedSearchTerm = searchTerm.trim().toLowerCase()
   const searchDigits = getPhoneDigits(searchTerm)
@@ -1903,6 +2142,7 @@ function App() {
   const activePageLabel = mobilePages.find((page) => page.id === activePage)?.label || 'Dashboard'
   const detailCustomer = customersById[String(detailCustomerId)]
   const quickRechargeCustomer = customersById[String(quickRechargeCustomerId)]
+  const recordPaymentCustomer = customersById[String(recordPaymentCustomerId)]
 
   function renderServiceSelect(value, onChange, includeExistingService = '', selectorId = 'service') {
     const options = serviceNames.includes(includeExistingService) || !includeExistingService
@@ -2041,8 +2281,24 @@ function App() {
     )
   }
 
+  function renderPartialPaymentInfo(recharge) {
+    const paidAmount = getRechargePaidAmount(recharge)
+    const remainingAmount = getRechargeBalance(recharge)
+
+    if (paidAmount <= 0 || remainingAmount <= 0) {
+      return null
+    }
+
+    return (
+      <div className="rt-partial-payment-info">
+        <p style={styles.historyMeta}>Paid: {formatLbp(paidAmount)}</p>
+        <p style={styles.unpaidText}>Remaining: {formatLbp(remainingAmount)}</p>
+      </div>
+    )
+  }
+
   function renderRechargeActions(recharge) {
-    const isPaid = String(recharge.status || '').toLowerCase() === 'paid'
+    const isPaid = String(recharge.status || '').toLowerCase() === 'paid' || getRechargeBalance(recharge) <= 0
     const isPayingRecharge = payingRechargeId === String(recharge.id)
     const isDeletingRecharge = deletingRechargeId === String(recharge.id)
 
@@ -2153,8 +2409,10 @@ function App() {
 
   function renderRechargeCard(recharge, showCustomerName = true) {
     const customer = customersById[String(recharge.customer_id)]
-    const isPaid = String(recharge.status || '').toLowerCase() === 'paid'
+    const isPaid = String(recharge.status || '').toLowerCase() === 'paid' || getRechargeBalance(recharge) <= 0
     const isEditingRecharge = editingRechargeId === String(recharge.id)
+    const rechargeAmount = getRechargeAmount(recharge)
+    const displayStatus = isPaid ? 'paid' : recharge.status || 'unpaid'
     const formattedDate = recharge.created_at
       ? new Date(recharge.created_at).toLocaleDateString()
       : ''
@@ -2170,8 +2428,9 @@ function App() {
               {recharge.service || 'Recharge'}
             </p>
             <p style={styles.historyMeta}>
-              {formatLbp(recharge.amount)} / {formatUsdFromLbp(recharge.amount, exchangeRate)}
+              Amount: {formatLbp(rechargeAmount)} / {formatUsdFromLbp(rechargeAmount, exchangeRate)}
             </p>
+            {renderPartialPaymentInfo(recharge)}
             {formattedDate && (
               <p style={styles.historyMeta}>{formattedDate}</p>
             )}
@@ -2183,7 +2442,7 @@ function App() {
               ...(isPaid ? styles.paidText : styles.unpaidText),
             }}
           >
-            {recharge.status || 'unpaid'}
+            {displayStatus}
           </span>
         </div>
 
@@ -2569,8 +2828,10 @@ function App() {
                   {showRechargeDetails && (
                     <div className="rt-recharge-preview-list rt-customer-extra" style={styles.rechargePreviewList}>
                       {customerRecharges.map((recharge) => {
-                        const isPaid = String(recharge.status || '').toLowerCase() === 'paid'
+                        const isPaid = String(recharge.status || '').toLowerCase() === 'paid' || getRechargeBalance(recharge) <= 0
                         const isPayingRecharge = payingRechargeId === String(recharge.id)
+                        const rechargeAmount = getRechargeAmount(recharge)
+                        const displayStatus = isPaid ? 'paid' : recharge.status || 'unpaid'
 
                         return (
                           <div
@@ -2583,8 +2844,9 @@ function App() {
                               <div>
                                 <p style={styles.historyTitle}>{recharge.service || 'Recharge'}</p>
                                 <p style={styles.historyMeta}>
-                                  {formatLbp(recharge.amount)} / {formatUsdFromLbp(recharge.amount, exchangeRate)}
+                                  Amount: {formatLbp(rechargeAmount)} / {formatUsdFromLbp(rechargeAmount, exchangeRate)}
                                 </p>
+                                {renderPartialPaymentInfo(recharge)}
                               </div>
                               <span
                                 className={`rt-status ${isPaid ? 'rt-status-paid' : 'rt-status-unpaid'}`}
@@ -2593,7 +2855,7 @@ function App() {
                                   ...(isPaid ? styles.paidText : styles.unpaidText),
                                 }}
                               >
-                                {recharge.status || 'unpaid'}
+                                {displayStatus}
                               </span>
                             </div>
                             {recharge.notes && (
@@ -3033,6 +3295,85 @@ function App() {
     )
   }
 
+  function renderRecordPaymentModal() {
+    if (!recordPaymentCustomer) {
+      return null
+    }
+
+    const customerBalance = recharges
+      .filter((recharge) => String(recharge.customer_id) === String(recordPaymentCustomer.id))
+      .filter((recharge) => rechargeMatchesMonth(recharge, monthFilter, customMonth))
+      .reduce((total, recharge) => total + getRechargeBalance(recharge), 0)
+
+    return (
+      <div className="rt-overlay rt-payment-overlay" style={styles.overlay}>
+        <form className="rt-modal rt-payment-modal" onSubmit={handleRecordPaymentSubmit} style={styles.modal}>
+          <div className="rt-card-top" style={styles.cardTop}>
+            <div>
+              <h2 style={styles.sectionTitle}>Record Payment</h2>
+              <p style={styles.customerName}>{recordPaymentCustomer.name || 'Wholesale customer'}</p>
+              <p style={styles.historyMeta}>Balance: {formatLbp(customerBalance)} / {formatUsdFromLbp(customerBalance, exchangeRate)}</p>
+              <p style={styles.historyMeta}>Showing: {selectedMonthLabel}</p>
+            </div>
+            <button
+              type="button"
+              aria-label="Close record payment"
+              onClick={closeRecordPayment}
+              style={styles.quietButton}
+            >
+              X
+            </button>
+          </div>
+
+          <label style={styles.field}>
+            <span style={styles.label}>Payment amount (LBP)</span>
+            <input
+              ref={recordPaymentAmountInputRef}
+              type="text"
+              inputMode="numeric"
+              value={recordPaymentAmount}
+              onChange={(event) => setRecordPaymentAmount(cleanLbpAmountInput(event.target.value))}
+              placeholder="250000"
+              style={styles.input}
+            />
+          </label>
+
+          <label style={styles.field}>
+            <span style={styles.label}>Note (optional)</span>
+            <textarea
+              value={recordPaymentNotes}
+              onChange={(event) => setRecordPaymentNotes(event.target.value)}
+              placeholder="Example: paid cash"
+              style={styles.textarea}
+            />
+          </label>
+
+          {recordPaymentError && <p style={styles.error}>{recordPaymentError}</p>}
+
+          <div className="rt-actions" style={styles.actions}>
+            <button
+              type="submit"
+              disabled={isRecordPaymentSubmitDisabled}
+              style={{
+                ...styles.button,
+                opacity: isRecordPaymentSubmitDisabled ? 0.6 : 1,
+              }}
+            >
+              {isRecordingPayment ? 'Saving...' : 'Save Payment'}
+            </button>
+            <button
+              type="button"
+              onClick={closeRecordPayment}
+              style={styles.quietButton}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
   function renderCustomerDetailModal() {
     if (!detailCustomer) {
       return null
@@ -3047,20 +3388,21 @@ function App() {
     const isPayingCustomer = payingCustomerId === String(detailCustomer.id)
     const isEditingDetailCustomer = editingCustomerId === String(detailCustomer.id)
     const isDeletingDetailCustomer = deletingCustomerId === String(detailCustomer.id)
+    const isWholesaleCustomer = getCustomerType(detailCustomer) === 'wholesale'
     let statementContent = null
 
     if (isStatementVisible) {
       const unpaidCustomerRecharges = customerRecharges.filter(
-        (recharge) => String(recharge.status || '').toLowerCase() === 'unpaid'
+        (recharge) => getRechargeBalance(recharge) > 0
       )
       const statementTotal = unpaidCustomerRecharges.reduce(
-        (total, recharge) => total + (Number(recharge.amount) || 0),
+        (total, recharge) => total + getRechargeBalance(recharge),
         0
       )
       const messageServiceTotals = unpaidCustomerRecharges.reduce((totals, recharge) => {
         const service = recharge.service || 'Recharge'
 
-        totals[service] = (totals[service] || 0) + (Number(recharge.amount) || 0)
+        totals[service] = (totals[service] || 0) + getRechargeBalance(recharge)
         return totals
       }, {})
       const messageLines = Object.entries(messageServiceTotals).map(
@@ -3093,7 +3435,8 @@ function App() {
                   <p style={styles.historyTitle}>
                     {formattedDate} - {recharge.service || 'Recharge'}
                   </p>
-                  <p style={styles.unpaidText}>{formatLbp(recharge.amount)}</p>
+                  <p style={styles.unpaidText}>{formatLbp(getRechargeBalance(recharge))}</p>
+                  {renderPartialPaymentInfo(recharge)}
                 </div>
               )
             })}
@@ -3260,6 +3603,15 @@ function App() {
                 >
                   Generate Statement
                 </button>
+                {isWholesaleCustomer && (
+                  <button
+                    type="button"
+                    onClick={() => openRecordPayment(detailCustomer.id)}
+                    style={styles.quietButton}
+                  >
+                    Record Payment
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => startEditingCustomer(detailCustomer)}
@@ -3351,6 +3703,15 @@ function App() {
             >
               Generate Statement
             </button>
+            {isWholesaleCustomer && (
+              <button
+                type="button"
+                onClick={() => openRecordPayment(detailCustomer.id)}
+                style={styles.quietButton}
+              >
+                Record Payment
+              </button>
+            )}
             <button
               type="button"
               onClick={() => startEditingCustomer(detailCustomer)}
@@ -3624,6 +3985,7 @@ function App() {
 
       {renderCustomerDetailModal()}
       {renderQuickRechargeModal()}
+      {renderRecordPaymentModal()}
     </div>
   )
 }
