@@ -819,9 +819,63 @@ code {
 }
 
 @media (max-width: 768px) {
+  :root {
+    --shadow: rgba(0, 0, 0, 0.22) 0 8px 18px -14px;
+  }
+
   .rt-shell {
     display: block !important;
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .rt-page-body,
+  .rt-panel,
+  .rt-stat-card,
+  .rt-customer-card,
+  .rt-history-card,
+  .rt-recharge-preview,
+  .rt-auth-card,
+  .rt-modal {
+    animation: none !important;
+    transition:
+      opacity 100ms ease,
+      transform 100ms ease,
+      background-color 120ms ease,
+      border-color 120ms ease !important;
+  }
+
+  .rt-shell button,
+  .rt-auth-shell button {
+    transition:
+      transform 80ms ease,
+      opacity 80ms ease,
+      background-color 120ms ease,
+      border-color 120ms ease !important;
+    will-change: transform;
+  }
+
+  .rt-shell button:not(:disabled):active,
+  .rt-auth-shell button:not(:disabled):active {
+    transform: scale(0.98) !important;
+    opacity: 0.85 !important;
+  }
+
+  .rt-overlay,
+  .rt-mobile-header,
+  .rt-mobile-menu-backdrop {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .rt-panel,
+  .rt-stat-card,
+  .rt-customer-card,
+  .rt-history-card,
+  .rt-recharge-preview,
+  .rt-mobile-header,
+  .rt-mobile-menu,
+  .rt-auth-card {
+    box-shadow: none !important;
   }
 
   .rt-sidebar {
@@ -839,8 +893,7 @@ code {
     padding: 10px 12px;
     border-bottom: 1px solid var(--border);
     background: rgba(14, 16, 22, 0.94);
-    backdrop-filter: blur(10px);
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+    box-shadow: none;
   }
 
   .rt-hamburger-button {
@@ -900,7 +953,6 @@ code {
     inset: 0;
     z-index: 50;
     background: rgba(3, 6, 12, 0.68);
-    backdrop-filter: blur(6px);
   }
 
   .rt-mobile-menu {
@@ -912,7 +964,7 @@ code {
     padding: 16px;
     border-right: 1px solid var(--border);
     background: #10131c;
-    box-shadow: var(--shadow);
+    box-shadow: none;
   }
 
   .rt-mobile-menu-nav {
@@ -1075,7 +1127,7 @@ code {
     position: sticky;
     bottom: calc(82px + env(safe-area-inset-bottom));
     z-index: 5;
-    box-shadow: var(--shadow);
+    box-shadow: none;
   }
 
   .rt-overlay {

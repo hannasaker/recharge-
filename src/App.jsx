@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 
 const defaultServices = ['Alfa', 'Touch', 'Ushare', 'Other']
@@ -1142,30 +1142,36 @@ function App() {
     }
   }, [])
 
-  const serviceNames = services
-    .map(getServiceName)
-    .filter(Boolean)
-    .filter((service, index, allServices) => allServices.indexOf(service) === index)
-    .sort((firstService, secondService) => firstService.localeCompare(secondService))
-  const serviceCounts = recharges.reduce((counts, recharge) => {
-    const service = String(recharge.service || '')
-    counts[service] = (counts[service] || 0) + 1
-    return counts
-  }, {})
-  const mostUsedService = serviceNames.reduce((currentBest, service) => {
-    if (!currentBest) {
-      return service
-    }
+  const serviceNames = useMemo(() => (
+    services
+      .map(getServiceName)
+      .filter(Boolean)
+      .filter((service, index, allServices) => allServices.indexOf(service) === index)
+      .sort((firstService, secondService) => firstService.localeCompare(secondService))
+  ), [services])
+  const serviceCounts = useMemo(() => (
+    recharges.reduce((counts, recharge) => {
+      const service = String(recharge.service || '')
+      counts[service] = (counts[service] || 0) + 1
+      return counts
+    }, {})
+  ), [recharges])
+  const mostUsedService = useMemo(() => (
+    serviceNames.reduce((currentBest, service) => {
+      if (!currentBest) {
+        return service
+      }
 
-    return (serviceCounts[service] || 0) > (serviceCounts[currentBest] || 0)
-      ? service
-      : currentBest
-  }, '')
-  const preferredService = (
+      return (serviceCounts[service] || 0) > (serviceCounts[currentBest] || 0)
+        ? service
+        : currentBest
+    }, '')
+  ), [serviceCounts, serviceNames])
+  const preferredService = useMemo(() => (
     serviceNames.includes(lastSelectedService)
       ? lastSelectedService
       : mostUsedService || serviceNames[0] || ''
-  )
+  ), [lastSelectedService, mostUsedService, serviceNames])
   const selectedRechargeService = serviceNames.includes(rechargeService)
     ? rechargeService
     : preferredService
@@ -1736,39 +1742,49 @@ function App() {
     lookup[String(customer.id)] = customer
     return lookup
   }, {})
-  const visibleRecharges = recharges.filter((recharge) =>
-    rechargeMatchesMonth(recharge, monthFilter, customMonth)
-  )
-  const sortedRecharges = [...visibleRecharges].sort((firstRecharge, secondRecharge) => {
-    const firstDate = new Date(firstRecharge.created_at || 0).getTime()
-    const secondDate = new Date(secondRecharge.created_at || 0).getTime()
+  const visibleRecharges = useMemo(() => (
+    recharges.filter((recharge) => rechargeMatchesMonth(recharge, monthFilter, customMonth))
+  ), [customMonth, monthFilter, recharges])
+  const sortedRecharges = useMemo(() => (
+    [...visibleRecharges].sort((firstRecharge, secondRecharge) => {
+      const firstDate = new Date(firstRecharge.created_at || 0).getTime()
+      const secondDate = new Date(secondRecharge.created_at || 0).getTime()
 
-    return secondDate - firstDate
-  })
-  const unpaidRecharges = visibleRecharges.filter(
-    (recharge) => String(recharge.status || '').toLowerCase() === 'unpaid'
-  )
-  const unpaidBalances = unpaidRecharges.reduce((balances, recharge) => {
-    const customerId = String(recharge.customer_id || '')
-    const amount = Number(recharge.amount) || 0
+      return secondDate - firstDate
+    })
+  ), [visibleRecharges])
+  const unpaidRecharges = useMemo(() => (
+    visibleRecharges.filter(
+      (recharge) => String(recharge.status || '').toLowerCase() === 'unpaid'
+    )
+  ), [visibleRecharges])
+  const unpaidBalances = useMemo(() => (
+    unpaidRecharges.reduce((balances, recharge) => {
+      const customerId = String(recharge.customer_id || '')
+      const amount = Number(recharge.amount) || 0
 
-    balances[customerId] = (balances[customerId] || 0) + amount
-    return balances
-  }, {})
-  const rechargesByCustomer = sortedRecharges.reduce((groups, recharge) => {
-    const customerId = String(recharge.customer_id || '')
+      balances[customerId] = (balances[customerId] || 0) + amount
+      return balances
+    }, {})
+  ), [unpaidRecharges])
+  const rechargesByCustomer = useMemo(() => (
+    sortedRecharges.reduce((groups, recharge) => {
+      const customerId = String(recharge.customer_id || '')
 
-    if (!groups[customerId]) {
-      groups[customerId] = []
-    }
+      if (!groups[customerId]) {
+        groups[customerId] = []
+      }
 
-    groups[customerId].push(recharge)
-    return groups
-  }, {})
-  const totalUnpaid = Object.values(unpaidBalances).reduce(
-    (total, amount) => total + amount,
-    0
-  )
+      groups[customerId].push(recharge)
+      return groups
+    }, {})
+  ), [sortedRecharges])
+  const totalUnpaid = useMemo(() => (
+    Object.values(unpaidBalances).reduce(
+      (total, amount) => total + amount,
+      0
+    )
+  ), [unpaidBalances])
   const selectedMonthLabel = getSelectedMonthLabel(monthFilter, customMonth)
   const exchangeRateNumber = Number(exchangeRate)
   const formattedCurrentRate = Number.isFinite(exchangeRateNumber) && exchangeRateNumber > 0
@@ -1796,26 +1812,47 @@ function App() {
   )
   const normalizedSearchTerm = searchTerm.trim().toLowerCase()
   const searchDigits = getPhoneDigits(searchTerm)
-  const sortedCustomers = [...customers].sort((firstCustomer, secondCustomer) =>
-    String(firstCustomer.name || '').localeCompare(String(secondCustomer.name || ''))
-  )
-  const normalCustomers = sortedCustomers.filter((customer) => getCustomerType(customer) === 'normal')
-  const wholesaleCustomers = sortedCustomers.filter((customer) => getCustomerType(customer) === 'wholesale')
-  const customerMatchesSearch = (customer) => {
-    const customerName = String(customer.name || '').toLowerCase()
-    const rawPhone = String(customer.phone || '').toLowerCase()
-    const formattedPhone = formatStoredPhone(customer.phone).toLowerCase()
-    const phoneDigits = getPhoneDigits(customer.phone)
-
-    return (
-      customerName.includes(normalizedSearchTerm) ||
-      rawPhone.includes(normalizedSearchTerm) ||
-      formattedPhone.includes(normalizedSearchTerm) ||
-      (searchDigits && phoneDigits.includes(searchDigits))
+  const sortedCustomers = useMemo(() => (
+    [...customers].sort((firstCustomer, secondCustomer) =>
+      String(firstCustomer.name || '').localeCompare(String(secondCustomer.name || ''))
     )
-  }
-  const filteredNormalCustomers = normalCustomers.filter(customerMatchesSearch)
-  const filteredWholesaleCustomers = wholesaleCustomers.filter(customerMatchesSearch)
+  ), [customers])
+  const normalCustomers = useMemo(() => (
+    sortedCustomers.filter((customer) => getCustomerType(customer) === 'normal')
+  ), [sortedCustomers])
+  const wholesaleCustomers = useMemo(() => (
+    sortedCustomers.filter((customer) => getCustomerType(customer) === 'wholesale')
+  ), [sortedCustomers])
+  const filteredNormalCustomers = useMemo(() => (
+    normalCustomers.filter((customer) => {
+      const customerName = String(customer.name || '').toLowerCase()
+      const rawPhone = String(customer.phone || '').toLowerCase()
+      const formattedPhone = formatStoredPhone(customer.phone).toLowerCase()
+      const phoneDigits = getPhoneDigits(customer.phone)
+
+      return (
+        customerName.includes(normalizedSearchTerm) ||
+        rawPhone.includes(normalizedSearchTerm) ||
+        formattedPhone.includes(normalizedSearchTerm) ||
+        (searchDigits && phoneDigits.includes(searchDigits))
+      )
+    })
+  ), [normalCustomers, normalizedSearchTerm, searchDigits])
+  const filteredWholesaleCustomers = useMemo(() => (
+    wholesaleCustomers.filter((customer) => {
+      const customerName = String(customer.name || '').toLowerCase()
+      const rawPhone = String(customer.phone || '').toLowerCase()
+      const formattedPhone = formatStoredPhone(customer.phone).toLowerCase()
+      const phoneDigits = getPhoneDigits(customer.phone)
+
+      return (
+        customerName.includes(normalizedSearchTerm) ||
+        rawPhone.includes(normalizedSearchTerm) ||
+        formattedPhone.includes(normalizedSearchTerm) ||
+        (searchDigits && phoneDigits.includes(searchDigits))
+      )
+    })
+  ), [normalizedSearchTerm, searchDigits, wholesaleCustomers])
   const monthSummaryCustomers = sortedCustomers
     .map((customer) => ({
       customer,
@@ -1824,26 +1861,32 @@ function App() {
     .filter(({ balance }) => balance > 0)
   const selectorQuery = customerSelectorQuery.trim().toLowerCase()
   const selectorDigits = getPhoneDigits(customerSelectorQuery)
-  const filteredSelectorCustomers = sortedCustomers.filter((customer) => {
-    const customerName = String(customer.name || '').toLowerCase()
-    const formattedPhone = formatStoredPhone(customer.phone).toLowerCase()
-    const phoneDigits = getPhoneDigits(customer.phone)
+  const filteredSelectorCustomers = useMemo(() => (
+    sortedCustomers.filter((customer) => {
+      const customerName = String(customer.name || '').toLowerCase()
+      const formattedPhone = formatStoredPhone(customer.phone).toLowerCase()
+      const phoneDigits = getPhoneDigits(customer.phone)
 
-    return (
-      !selectorQuery ||
-      customerName.includes(selectorQuery) ||
-      formattedPhone.includes(selectorQuery) ||
-      (selectorDigits && phoneDigits.includes(selectorDigits))
+      return (
+        !selectorQuery ||
+        customerName.includes(selectorQuery) ||
+        formattedPhone.includes(selectorQuery) ||
+        (selectorDigits && phoneDigits.includes(selectorDigits))
+      )
+    }).slice(0, 8)
+  ), [selectorDigits, selectorQuery, sortedCustomers])
+  const normalUnpaid = useMemo(() => (
+    normalCustomers.reduce(
+      (total, customer) => total + (unpaidBalances[String(customer.id)] || 0),
+      0
     )
-  }).slice(0, 8)
-  const normalUnpaid = normalCustomers.reduce(
-    (total, customer) => total + (unpaidBalances[String(customer.id)] || 0),
-    0
-  )
-  const wholesaleUnpaid = wholesaleCustomers.reduce(
-    (total, customer) => total + (unpaidBalances[String(customer.id)] || 0),
-    0
-  )
+  ), [normalCustomers, unpaidBalances])
+  const wholesaleUnpaid = useMemo(() => (
+    wholesaleCustomers.reduce(
+      (total, customer) => total + (unpaidBalances[String(customer.id)] || 0),
+      0
+    )
+  ), [unpaidBalances, wholesaleCustomers])
   const activePageLabel = mobilePages.find((page) => page.id === activePage)?.label || 'Dashboard'
   const detailCustomer = customersById[String(detailCustomerId)]
   const quickRechargeCustomer = customersById[String(quickRechargeCustomerId)]
@@ -1858,7 +1901,7 @@ function App() {
     const filteredServices = options.filter((service) =>
       !normalizedServiceSearch ||
       service.toLowerCase().includes(normalizedServiceSearch)
-    )
+    ).slice(0, 20)
 
     function chooseService(service) {
       onChange(service)
@@ -2429,7 +2472,7 @@ function App() {
   }
 
   function renderCustomersPage(customerTypeFilter = 'normal') {
-    const showRechargeDetails = normalizedSearchTerm.length > 0 || searchDigits.length > 0
+    const showRechargeDetails = !isMobileView && (normalizedSearchTerm.length > 0 || searchDigits.length > 0)
     const isWholesalePage = customerTypeFilter === 'wholesale'
     const pageCustomers = isWholesalePage ? wholesaleCustomers : normalCustomers
     const filteredPageCustomers = isWholesalePage ? filteredWholesaleCustomers : filteredNormalCustomers
@@ -2458,7 +2501,9 @@ function App() {
           <div className="rt-list rt-customer-list" style={styles.list}>
             {filteredPageCustomers.map((customer) => {
               const customerBalance = unpaidBalances[String(customer.id)] || 0
-              const customerRecharges = rechargesByCustomer[String(customer.id)] || []
+              const customerRecharges = showRechargeDetails
+                ? rechargesByCustomer[String(customer.id)] || []
+                : []
               const hasUnpaidRecharges = unpaidRecharges.some(
                 (recharge) => String(recharge.customer_id) === String(customer.id)
               )
@@ -2564,7 +2609,7 @@ function App() {
                     </div>
                   )}
 
-                  {isEditingCustomer ? (
+                  {!isMobileView && (isEditingCustomer ? (
                     <form
                       className="rt-panel rt-customer-extra rt-customer-edit-form"
                       onClick={(event) => event.stopPropagation()}
@@ -2691,7 +2736,7 @@ function App() {
                         </>
                       )}
                     </div>
-                  )}
+                  ))}
                 </div>
               )
             })}
