@@ -3039,7 +3039,7 @@ function App() {
           Total unpaid: {formatLbp(statementTotal)} / {formatUsdFromLbpDetailed(statementTotal, exchangeRate)}
         </p>
 
-        <pre style={styles.messageBox}>{whatsappMessage}</pre>
+        <pre className="rt-message-box" style={styles.messageBox}>{whatsappMessage}</pre>
 
         <div className="rt-actions" style={styles.actions}>
           <button
@@ -3060,73 +3060,76 @@ function App() {
       </div>
     )
     const editCustomerForm = isEditingDetailCustomer && (
-      <form
-        className="rt-mobile-only rt-mobile-detail-edit"
-        onSubmit={handleCustomerEditSubmit}
-        style={styles.editBox}
-      >
-        <label style={styles.field}>
-          <span style={styles.label}>Name</span>
-          <input
-            type="text"
-            value={editCustomerName}
-            onChange={(event) => setEditCustomerName(event.target.value)}
-            style={styles.input}
-          />
-        </label>
-        <label style={styles.field}>
-          <span style={styles.label}>Phone</span>
-          <input
-            type="tel"
-            value={formatPhoneInput(editCustomerPhone)}
-            onChange={(event) => setEditCustomerPhone(cleanPhoneInput(event.target.value))}
-            maxLength="10"
-            style={styles.input}
-          />
-        </label>
-        <label style={styles.field}>
-          <span style={styles.label}>Customer Type</span>
-          <select
-            value={editCustomerType}
-            onChange={(event) => setEditCustomerType(event.target.value)}
-            style={styles.input}
-          >
-            {customerTypes.map((type) => (
-              <option key={type.value} value={type.value}>
-                {type.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label style={styles.field}>
-          <span style={styles.label}>Notes</span>
-          <textarea
-            value={editCustomerNotes}
-            onChange={(event) => setEditCustomerNotes(event.target.value)}
-            style={styles.textarea}
-          />
-        </label>
-        {customerEditError && <p style={styles.error}>{customerEditError}</p>}
-        <div className="rt-actions" style={styles.actions}>
-          <button
-            type="submit"
-            disabled={isCustomerEditSubmitting}
-            style={{
-              ...styles.smallButton,
-              opacity: isCustomerEditSubmitting ? 0.6 : 1,
-            }}
-          >
-            {isCustomerEditSubmitting ? 'Saving...' : 'Save customer'}
-          </button>
-          <button
-            type="button"
-            onClick={cancelEditingCustomer}
-            style={styles.quietButton}
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
+      <section className="rt-detail-edit-panel">
+        <h2 style={styles.sectionTitle}>Edit Customer</h2>
+        <form
+          className="rt-detail-edit-form"
+          onSubmit={handleCustomerEditSubmit}
+          style={styles.editBox}
+        >
+          <label style={styles.field}>
+            <span style={styles.label}>Name</span>
+            <input
+              type="text"
+              value={editCustomerName}
+              onChange={(event) => setEditCustomerName(event.target.value)}
+              style={styles.input}
+            />
+          </label>
+          <label style={styles.field}>
+            <span style={styles.label}>Phone</span>
+            <input
+              type="tel"
+              value={formatPhoneInput(editCustomerPhone)}
+              onChange={(event) => setEditCustomerPhone(cleanPhoneInput(event.target.value))}
+              maxLength="10"
+              style={styles.input}
+            />
+          </label>
+          <label style={styles.field}>
+            <span style={styles.label}>Customer Type</span>
+            <select
+              value={editCustomerType}
+              onChange={(event) => setEditCustomerType(event.target.value)}
+              style={styles.input}
+            >
+              {customerTypes.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={styles.field}>
+            <span style={styles.label}>Notes</span>
+            <textarea
+              value={editCustomerNotes}
+              onChange={(event) => setEditCustomerNotes(event.target.value)}
+              style={styles.textarea}
+            />
+          </label>
+          {customerEditError && <p style={styles.error}>{customerEditError}</p>}
+          <div className="rt-actions" style={styles.actions}>
+            <button
+              type="submit"
+              disabled={isCustomerEditSubmitting}
+              style={{
+                ...styles.smallButton,
+                opacity: isCustomerEditSubmitting ? 0.6 : 1,
+              }}
+            >
+              {isCustomerEditSubmitting ? 'Saving...' : 'Save customer'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelEditingCustomer}
+              style={styles.quietButton}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </section>
     )
 
     if (isMobileView) {
@@ -3165,21 +3168,21 @@ function App() {
               <div className="rt-actions rt-detail-primary-actions" style={styles.actions}>
                 <button
                   type="button"
+                  onClick={() => openQuickRecharge(detailCustomer.id)}
+                  style={styles.smallButton}
+                >
+                  + Recharge
+                </button>
+                <button
+                  type="button"
                   disabled={!hasUnpaidRecharges || isPayingCustomer}
                   onClick={() => handleMarkAllPaid(detailCustomer.id)}
                   style={{
-                    ...styles.smallButton,
+                    ...styles.quietButton,
                     opacity: !hasUnpaidRecharges || isPayingCustomer ? 0.6 : 1,
                   }}
                 >
                   {isPayingCustomer ? 'Updating...' : 'Mark All as Paid'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openQuickRecharge(detailCustomer.id)}
-                  style={styles.quietButton}
-                >
-                  + Recharge
                 </button>
                 <button
                   type="button"
@@ -3188,10 +3191,30 @@ function App() {
                 >
                   Generate Statement
                 </button>
+                <button
+                  type="button"
+                  onClick={() => startEditingCustomer(detailCustomer)}
+                  style={styles.quietButton}
+                >
+                  Edit Customer
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingDetailCustomer}
+                  onClick={() => handleDeleteCustomer(detailCustomer.id)}
+                  style={{
+                    ...styles.dangerButton,
+                    opacity: isDeletingDetailCustomer ? 0.6 : 1,
+                  }}
+                >
+                  {isDeletingDetailCustomer ? 'Deleting...' : 'Delete Customer'}
+                </button>
               </div>
             </section>
 
             {statementContent}
+
+            {editCustomerForm}
 
             <section className="rt-detail-section">
               <h2 style={styles.sectionTitle}>Recharge History</h2>
@@ -3203,34 +3226,6 @@ function App() {
                   <p style={styles.empty}>No recharges for this customer.</p>
                 )}
               </div>
-            </section>
-
-            <section className="rt-detail-section rt-detail-edit-section">
-              <h2 style={styles.sectionTitle}>Edit Customer</h2>
-              {isEditingDetailCustomer ? (
-                editCustomerForm
-              ) : (
-                <div className="rt-actions" style={styles.actions}>
-                  <button
-                    type="button"
-                    onClick={() => startEditingCustomer(detailCustomer)}
-                    style={styles.quietButton}
-                  >
-                    Edit Customer
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isDeletingDetailCustomer}
-                    onClick={() => handleDeleteCustomer(detailCustomer.id)}
-                    style={{
-                      ...styles.dangerButton,
-                      opacity: isDeletingDetailCustomer ? 0.6 : 1,
-                    }}
-                  >
-                    {isDeletingDetailCustomer ? 'Deleting...' : 'Delete Customer'}
-                  </button>
-                </div>
-              )}
             </section>
           </div>
         </div>
@@ -3261,24 +3256,24 @@ function App() {
             <p style={styles.notes}>Notes: {detailCustomer.notes}</p>
           )}
 
-          <div className="rt-actions" style={styles.actions}>
+          <div className="rt-actions rt-detail-primary-actions" style={styles.actions}>
+            <button
+              type="button"
+              onClick={() => openQuickRecharge(detailCustomer.id)}
+              style={styles.smallButton}
+            >
+              + Recharge
+            </button>
             <button
               type="button"
               disabled={!hasUnpaidRecharges || isPayingCustomer}
               onClick={() => handleMarkAllPaid(detailCustomer.id)}
               style={{
-                ...styles.smallButton,
+                ...styles.quietButton,
                 opacity: !hasUnpaidRecharges || isPayingCustomer ? 0.6 : 1,
               }}
             >
               {isPayingCustomer ? 'Updating...' : 'Mark All as Paid'}
-            </button>
-            <button
-              type="button"
-              onClick={() => openQuickRecharge(detailCustomer.id)}
-              style={styles.quietButton}
-            >
-              + Recharge
             </button>
             <button
               type="button"
@@ -3288,7 +3283,6 @@ function App() {
               Generate Statement
             </button>
             <button
-              className="rt-mobile-only"
               type="button"
               onClick={() => startEditingCustomer(detailCustomer)}
               style={styles.quietButton}
@@ -3296,7 +3290,6 @@ function App() {
               Edit Customer
             </button>
             <button
-              className="rt-mobile-only"
               type="button"
               disabled={isDeletingDetailCustomer}
               onClick={() => handleDeleteCustomer(detailCustomer.id)}
@@ -3313,13 +3306,16 @@ function App() {
 
           {statementContent}
 
-          <div className="rt-list" style={styles.list}>
-            {customerRecharges.map((recharge) => renderRechargeCard(recharge, false))}
+          <section className="rt-detail-section rt-detail-history-section">
+            <h2 style={styles.sectionTitle}>Recharge History</h2>
+            <div className="rt-list" style={styles.list}>
+              {customerRecharges.map((recharge) => renderRechargeCard(recharge, false))}
 
-            {customerRecharges.length === 0 && (
-              <p style={styles.empty}>No recharges for this customer.</p>
-            )}
-          </div>
+              {customerRecharges.length === 0 && (
+                <p style={styles.empty}>No recharges for this customer.</p>
+              )}
+            </div>
+          </section>
         </div>
       </div>
     )
