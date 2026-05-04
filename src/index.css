@@ -862,9 +862,11 @@ code {
 
   .rt-overlay,
   .rt-mobile-header,
-  .rt-mobile-menu-backdrop {
+  .rt-mobile-menu-backdrop,
+  .rt-modal {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
+    filter: none !important;
   }
 
   .rt-panel,
@@ -872,6 +874,10 @@ code {
   .rt-customer-card,
   .rt-history-card,
   .rt-recharge-preview,
+  .rt-modal,
+  .rt-detail-statement,
+  .rt-detail-edit-panel,
+  .rt-service-selector-list,
   .rt-mobile-header,
   .rt-mobile-menu,
   .rt-auth-card {

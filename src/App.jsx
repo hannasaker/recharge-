@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
 
 const defaultServices = ['Alfa', 'Touch', 'Ushare', 'Other']
+const mobileListLimit = 50
 const rechargeStatuses = ['unpaid', 'paid']
 const customerTypes = [
   { value: 'normal', label: 'Normal' },
@@ -742,7 +743,7 @@ function App() {
   const [isRechargeEditSubmitting, setIsRechargeEditSubmitting] = useState(false)
   const [deletingRechargeId, setDeletingRechargeId] = useState('')
 
-  async function fetchCustomers() {
+  const fetchCustomers = useCallback(async () => {
     const { data, error } = await supabase
       .from('customers')
       .select('*')
@@ -752,9 +753,9 @@ function App() {
     } else {
       setCustomers(data || [])
     }
-  }
+  }, [])
 
-  async function fetchRecharges() {
+  const fetchRecharges = useCallback(async () => {
     const { data, error } = await supabase
       .from('recharges')
       .select('*')
@@ -764,7 +765,7 @@ function App() {
     } else {
       setRecharges(data || [])
     }
-  }
+  }, [])
 
   async function seedDefaultServices() {
     const { error } = await supabase
@@ -797,9 +798,9 @@ function App() {
     setServices(data || [])
   }
 
-  async function refreshData() {
+  const refreshData = useCallback(async () => {
     await Promise.all([fetchCustomers(), fetchRecharges()])
-  }
+  }, [fetchCustomers, fetchRecharges])
 
   function clearAppData() {
     setCustomers([])
@@ -1142,6 +1143,14 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!quickRechargeCustomerId) {
+      return
+    }
+
+    quickRechargeAmountInputRef.current?.focus()
+  }, [quickRechargeCustomerId])
+
   const serviceNames = useMemo(() => (
     services
       .map(getServiceName)
@@ -1280,16 +1289,15 @@ function App() {
     }
   }
 
-  function openQuickRecharge(customerId) {
+  const openQuickRecharge = useCallback((customerId) => {
     setQuickRechargeCustomerId(String(customerId))
     setQuickRechargeService(preferredService)
     setQuickRechargeAmount('')
     setQuickRechargeNotes('')
     setQuickRechargeError('')
-    setTimeout(() => quickRechargeAmountInputRef.current?.focus(), 0)
-  }
+  }, [preferredService])
 
-  function closeQuickRecharge() {
+  const closeQuickRecharge = useCallback(() => {
     setQuickRechargeCustomerId('')
     setQuickRechargeService('')
     setQuickRechargeAmount('')
@@ -1297,7 +1305,7 @@ function App() {
     setQuickRechargeError('')
     setActiveServiceSelectorId('')
     setServiceSearchTerm('')
-  }
+  }, [])
 
   function closeCustomerDetail() {
     setDetailCustomerId('')
@@ -1343,14 +1351,14 @@ function App() {
     }
   }
 
-  function startEditingCustomer(customer) {
+  const startEditingCustomer = useCallback((customer) => {
     setEditingCustomerId(String(customer.id))
     setEditCustomerName(customer.name || '')
     setEditCustomerPhone(cleanPhoneInput(customer.phone))
     setEditCustomerNotes(customer.notes || '')
     setEditCustomerType(getCustomerType(customer))
     setCustomerEditError('')
-  }
+  }, [])
 
   function cancelEditingCustomer() {
     setEditingCustomerId('')
@@ -1405,7 +1413,7 @@ function App() {
     }
   }
 
-  async function handleDeleteCustomer(customerId) {
+  const handleDeleteCustomer = useCallback(async (customerId) => {
     if (!window.confirm('Delete this customer?')) {
       return
     }
@@ -1426,9 +1434,9 @@ function App() {
     } finally {
       setDeletingCustomerId('')
     }
-  }
+  }, [refreshData])
 
-  async function handleMarkRechargePaid(rechargeId) {
+  const handleMarkRechargePaid = useCallback(async (rechargeId) => {
     try {
       setPayingRechargeId(String(rechargeId))
 
@@ -1445,9 +1453,9 @@ function App() {
     } finally {
       setPayingRechargeId('')
     }
-  }
+  }, [fetchRecharges])
 
-  async function handleMarkAllPaid(customerId) {
+  const handleMarkAllPaid = useCallback(async (customerId) => {
     try {
       setPayingCustomerId(String(customerId))
 
@@ -1465,9 +1473,9 @@ function App() {
     } finally {
       setPayingCustomerId('')
     }
-  }
+  }, [fetchRecharges])
 
-  function startEditingRecharge(recharge) {
+  const startEditingRecharge = useCallback((recharge) => {
     setEditingRechargeId(String(recharge.id))
     setEditRechargeService(recharge.service || preferredService)
     setEditRechargeAmount(getThousandsFromLbp(recharge.amount))
@@ -1475,7 +1483,7 @@ function App() {
     setEditRechargeStatus(recharge.status || 'unpaid')
     setActiveServiceSelectorId('')
     setServiceSearchTerm('')
-  }
+  }, [preferredService])
 
   function cancelEditingRecharge() {
     setEditingRechargeId('')
@@ -1524,7 +1532,7 @@ function App() {
     }
   }
 
-  async function handleDeleteRecharge(rechargeId) {
+  const handleDeleteRecharge = useCallback(async (rechargeId) => {
     if (!window.confirm('Delete this recharge?')) {
       return
     }
@@ -1545,7 +1553,7 @@ function App() {
     } finally {
       setDeletingRechargeId('')
     }
-  }
+  }, [fetchRecharges])
 
   async function handleAddService(event) {
     event.preventDefault()
@@ -1738,10 +1746,10 @@ function App() {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
-  const customersById = customers.reduce((lookup, customer) => {
-    lookup[String(customer.id)] = customer
-    return lookup
-  }, {})
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
+  const customersById = useMemo(() => (
+    Object.fromEntries(customers.map((customer) => [String(customer.id), customer]))
+  ), [customers])
   const visibleRecharges = useMemo(() => (
     recharges.filter((recharge) => rechargeMatchesMonth(recharge, monthFilter, customMonth))
   ), [customMonth, monthFilter, recharges])
@@ -1758,6 +1766,9 @@ function App() {
       (recharge) => String(recharge.status || '').toLowerCase() === 'unpaid'
     )
   ), [visibleRecharges])
+  const unpaidCustomerIds = useMemo(() => (
+    new Set(unpaidRecharges.map((recharge) => String(recharge.customer_id || '')))
+  ), [unpaidRecharges])
   const unpaidBalances = useMemo(() => (
     unpaidRecharges.reduce((balances, recharge) => {
       const customerId = String(recharge.customer_id || '')
@@ -1853,12 +1864,14 @@ function App() {
       )
     })
   ), [normalizedSearchTerm, searchDigits, wholesaleCustomers])
-  const monthSummaryCustomers = sortedCustomers
-    .map((customer) => ({
-      customer,
-      balance: unpaidBalances[String(customer.id)] || 0,
-    }))
-    .filter(({ balance }) => balance > 0)
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
+  const monthSummaryCustomers = useMemo(() => (
+    sortedCustomers.flatMap((customer) => {
+      const balance = unpaidBalances[String(customer.id)] || 0
+
+      return balance > 0 ? [{ customer, balance }] : []
+    })
+  ), [sortedCustomers, unpaidBalances])
   const selectorQuery = customerSelectorQuery.trim().toLowerCase()
   const selectorDigits = getPhoneDigits(customerSelectorQuery)
   const filteredSelectorCustomers = useMemo(() => (
@@ -2476,6 +2489,9 @@ function App() {
     const isWholesalePage = customerTypeFilter === 'wholesale'
     const pageCustomers = isWholesalePage ? wholesaleCustomers : normalCustomers
     const filteredPageCustomers = isWholesalePage ? filteredWholesaleCustomers : filteredNormalCustomers
+    const visiblePageCustomers = isMobileView
+      ? filteredPageCustomers.slice(0, mobileListLimit)
+      : filteredPageCustomers
     const pageTitle = isWholesalePage ? 'Wholesale' : 'Customers & Balances'
     const emptyMessage = isWholesalePage ? 'No wholesale customers yet.' : 'No customers yet.'
     const noMatchMessage = isWholesalePage
@@ -2499,14 +2515,12 @@ function App() {
           </div>
 
           <div className="rt-list rt-customer-list" style={styles.list}>
-            {filteredPageCustomers.map((customer) => {
+            {visiblePageCustomers.map((customer) => {
               const customerBalance = unpaidBalances[String(customer.id)] || 0
               const customerRecharges = showRechargeDetails
                 ? rechargesByCustomer[String(customer.id)] || []
                 : []
-              const hasUnpaidRecharges = unpaidRecharges.some(
-                (recharge) => String(recharge.customer_id) === String(customer.id)
-              )
+              const hasUnpaidRecharges = unpaidCustomerIds.has(String(customer.id))
               const isPayingCustomer = payingCustomerId === String(customer.id)
               const isEditingCustomer = editingCustomerId === String(customer.id)
               const isDeletingCustomer = deletingCustomerId === String(customer.id)
@@ -2811,6 +2825,10 @@ function App() {
   }
 
   function renderRechargeHistoryPage() {
+    const visibleHistoryRecharges = isMobileView
+      ? sortedRecharges.slice(0, mobileListLimit)
+      : sortedRecharges
+
     return (
       <section style={styles.section}>
         <div style={styles.listHeader}>
@@ -2818,7 +2836,7 @@ function App() {
         </div>
 
         <div className="rt-list rt-history-list" style={styles.list}>
-          {sortedRecharges.map((recharge) => renderRechargeCard(recharge))}
+          {visibleHistoryRecharges.map((recharge) => renderRechargeCard(recharge))}
 
           {sortedRecharges.length === 0 && (
             <p style={styles.empty}>No recharges for this period.</p>
@@ -3021,89 +3039,95 @@ function App() {
     }
 
     const customerRecharges = rechargesByCustomer[String(detailCustomer.id)] || []
+    const visibleCustomerRecharges = isMobileView
+      ? customerRecharges.slice(0, mobileListLimit)
+      : customerRecharges
     const customerBalance = unpaidBalances[String(detailCustomer.id)] || 0
-    const hasUnpaidRecharges = unpaidRecharges.some(
-      (recharge) => String(recharge.customer_id) === String(detailCustomer.id)
-    )
+    const hasUnpaidRecharges = unpaidCustomerIds.has(String(detailCustomer.id))
     const isPayingCustomer = payingCustomerId === String(detailCustomer.id)
     const isEditingDetailCustomer = editingCustomerId === String(detailCustomer.id)
     const isDeletingDetailCustomer = deletingCustomerId === String(detailCustomer.id)
-    const unpaidCustomerRecharges = customerRecharges.filter(
-      (recharge) => String(recharge.status || '').toLowerCase() === 'unpaid'
-    )
-    const statementTotal = unpaidCustomerRecharges.reduce(
-      (total, recharge) => total + (Number(recharge.amount) || 0),
-      0
-    )
-    const messageServiceTotals = unpaidCustomerRecharges.reduce((totals, recharge) => {
-      const service = recharge.service || 'Recharge'
+    let statementContent = null
 
-      totals[service] = (totals[service] || 0) + (Number(recharge.amount) || 0)
-      return totals
-    }, {})
-    const messageLines = Object.entries(messageServiceTotals).map(
-      ([service, amount]) => `- ${service}: ${formatLbp(amount)}`
-    )
-    const whatsappMessage = [
-      `Hello ${detailCustomer.name || 'Customer'},`,
-      'Your recharge balance is:',
-      '',
-      ...(messageLines.length > 0 ? messageLines : ['No unpaid recharges.']),
-      '',
-      `Total: ${formatLbp(statementTotal)} (${formatUsdFromLbpDetailed(statementTotal, exchangeRate)})`,
-    ].join('\n')
-    const statementContent = isStatementVisible && (
-      <div className="rt-detail-statement" style={styles.statementBox}>
-        <div>
-          <h2 style={styles.sectionTitle}>Customer Statement</h2>
-          <p style={styles.customerName}>{detailCustomer.name}</p>
+    if (isStatementVisible) {
+      const unpaidCustomerRecharges = customerRecharges.filter(
+        (recharge) => String(recharge.status || '').toLowerCase() === 'unpaid'
+      )
+      const statementTotal = unpaidCustomerRecharges.reduce(
+        (total, recharge) => total + (Number(recharge.amount) || 0),
+        0
+      )
+      const messageServiceTotals = unpaidCustomerRecharges.reduce((totals, recharge) => {
+        const service = recharge.service || 'Recharge'
+
+        totals[service] = (totals[service] || 0) + (Number(recharge.amount) || 0)
+        return totals
+      }, {})
+      const messageLines = Object.entries(messageServiceTotals).map(
+        ([service, amount]) => `- ${service}: ${formatLbp(amount)}`
+      )
+      const whatsappMessage = [
+        `Hello ${detailCustomer.name || 'Customer'},`,
+        'Your recharge balance is:',
+        '',
+        ...(messageLines.length > 0 ? messageLines : ['No unpaid recharges.']),
+        '',
+        `Total: ${formatLbp(statementTotal)} (${formatUsdFromLbpDetailed(statementTotal, exchangeRate)})`,
+      ].join('\n')
+
+      statementContent = (
+        <div className="rt-detail-statement" style={styles.statementBox}>
+          <div>
+            <h2 style={styles.sectionTitle}>Customer Statement</h2>
+            <p style={styles.customerName}>{detailCustomer.name}</p>
+          </div>
+
+          <div className="rt-list" style={styles.list}>
+            {unpaidCustomerRecharges.map((recharge) => {
+              const formattedDate = recharge.created_at
+                ? new Date(recharge.created_at).toLocaleDateString()
+                : 'No date'
+
+              return (
+                <div className="rt-recharge-preview" key={recharge.id} style={styles.rechargePreview}>
+                  <p style={styles.historyTitle}>
+                    {formattedDate} - {recharge.service || 'Recharge'}
+                  </p>
+                  <p style={styles.unpaidText}>{formatLbp(recharge.amount)}</p>
+                </div>
+              )
+            })}
+
+            {unpaidCustomerRecharges.length === 0 && (
+              <p style={styles.empty}>No unpaid recharges.</p>
+            )}
+          </div>
+
+          <p style={styles.unpaidText}>
+            Total unpaid: {formatLbp(statementTotal)} / {formatUsdFromLbpDetailed(statementTotal, exchangeRate)}
+          </p>
+
+          <pre className="rt-message-box" style={styles.messageBox}>{whatsappMessage}</pre>
+
+          <div className="rt-actions" style={styles.actions}>
+            <button
+              type="button"
+              onClick={() => copyWhatsAppMessage(whatsappMessage)}
+              style={styles.smallButton}
+            >
+              Copy Message
+            </button>
+            <button
+              type="button"
+              onClick={() => sendWhatsAppMessage(detailCustomer, whatsappMessage)}
+              style={styles.quietButton}
+            >
+              Send via WhatsApp
+            </button>
+          </div>
         </div>
-
-        <div className="rt-list" style={styles.list}>
-          {unpaidCustomerRecharges.map((recharge) => {
-            const formattedDate = recharge.created_at
-              ? new Date(recharge.created_at).toLocaleDateString()
-              : 'No date'
-
-            return (
-              <div className="rt-recharge-preview" key={recharge.id} style={styles.rechargePreview}>
-                <p style={styles.historyTitle}>
-                  {formattedDate} - {recharge.service || 'Recharge'}
-                </p>
-                <p style={styles.unpaidText}>{formatLbp(recharge.amount)}</p>
-              </div>
-            )
-          })}
-
-          {unpaidCustomerRecharges.length === 0 && (
-            <p style={styles.empty}>No unpaid recharges.</p>
-          )}
-        </div>
-
-        <p style={styles.unpaidText}>
-          Total unpaid: {formatLbp(statementTotal)} / {formatUsdFromLbpDetailed(statementTotal, exchangeRate)}
-        </p>
-
-        <pre className="rt-message-box" style={styles.messageBox}>{whatsappMessage}</pre>
-
-        <div className="rt-actions" style={styles.actions}>
-          <button
-            type="button"
-            onClick={() => copyWhatsAppMessage(whatsappMessage)}
-            style={styles.smallButton}
-          >
-            Copy Message
-          </button>
-          <button
-            type="button"
-            onClick={() => sendWhatsAppMessage(detailCustomer, whatsappMessage)}
-            style={styles.quietButton}
-          >
-            Send via WhatsApp
-          </button>
-        </div>
-      </div>
-    )
+      )
+    }
     const editCustomerForm = isEditingDetailCustomer && (
       <section className="rt-detail-edit-panel">
         <h2 style={styles.sectionTitle}>Edit Customer</h2>
@@ -3265,7 +3289,7 @@ function App() {
               <h2 style={styles.sectionTitle}>Recharge History</h2>
               <p style={styles.historyMeta}>Showing recharges for: {selectedMonthLabel}</p>
               <div className="rt-list" style={styles.list}>
-                {customerRecharges.map((recharge) => renderRechargeCard(recharge, false))}
+                {visibleCustomerRecharges.map((recharge) => renderRechargeCard(recharge, false))}
 
                 {customerRecharges.length === 0 && (
                   <p style={styles.empty}>No recharges for this customer.</p>
@@ -3354,7 +3378,7 @@ function App() {
           <section className="rt-detail-section rt-detail-history-section">
             <h2 style={styles.sectionTitle}>Recharge History</h2>
             <div className="rt-list" style={styles.list}>
-              {customerRecharges.map((recharge) => renderRechargeCard(recharge, false))}
+              {visibleCustomerRecharges.map((recharge) => renderRechargeCard(recharge, false))}
 
               {customerRecharges.length === 0 && (
                 <p style={styles.empty}>No recharges for this customer.</p>
