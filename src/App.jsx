@@ -10,6 +10,7 @@ const customerTypes = [
 ]
 const pages = [
   { id: 'dashboard', label: 'Dashboard', mobileLabel: 'Dashboard' },
+  { id: 'monthlySummary', label: 'Monthly Summary', mobileLabel: 'Monthly' },
   { id: 'addCustomer', label: 'Add Customer', mobileLabel: 'Add' },
   { id: 'customers', label: 'Customers & Balances', mobileLabel: 'Customers' },
   { id: 'wholesale', label: 'Wholesale', mobileLabel: 'Wholesale' },
@@ -17,10 +18,7 @@ const pages = [
   { id: 'services', label: 'Bundles/Services', mobileLabel: 'Services' },
   { id: 'history', label: 'Recharge History', mobileLabel: 'History' },
 ]
-const mobilePages = [
-  ...pages,
-  { id: 'monthlySummary', label: 'Monthly Summary', mobileLabel: 'Monthly Summary' },
-]
+const mobilePages = pages
 const defaultExchangeRate = '90000'
 const exchangeRateStorageKey = 'rechargeTrackerExchangeRate'
 const exchangeRateUpdatedAtStorageKey = 'rechargeTrackerExchangeRateUpdatedAt'
@@ -1666,6 +1664,16 @@ function App() {
   }, [fetchRecharges, recharges])
 
   const handleMarkAllPaid = useCallback(async (customerId) => {
+    const customer = customers.find((currentCustomer) => String(currentCustomer.id) === String(customerId))
+    const customerName = customer?.name ? ` for ${customer.name}` : ' for this customer'
+    const confirmed = window.confirm(
+      `Are you sure you want to mark all unpaid recharges${customerName} as paid?`
+    )
+
+    if (!confirmed) {
+      return
+    }
+
     const customerOpenRecharges = recharges.filter((recharge) => (
       String(recharge.customer_id) === String(customerId) &&
       getRechargeBalance(recharge) > 0
@@ -1714,7 +1722,7 @@ function App() {
     } finally {
       setPayingCustomerId('')
     }
-  }, [fetchRecharges, recharges])
+  }, [customers, fetchRecharges, recharges])
 
   const startEditingRecharge = useCallback((recharge) => {
     setEditingRechargeId(String(recharge.id))
@@ -1744,10 +1752,14 @@ function App() {
     const trimmedNotes = editRechargeNotes.trim()
     const nextAmount = parsedAmount * 1000
     const currentRecharge = recharges.find((recharge) => String(recharge.id) === String(editingRechargeId))
+    const currentRechargeStatus = String(currentRecharge?.status || '').toLowerCase()
+    const currentPaidAmount = getRechargePaidAmount(currentRecharge)
     const nextPaidAmount = editRechargeStatus === 'paid'
       ? nextAmount
-      : Math.min(getRechargePaidAmount(currentRecharge), nextAmount)
-    const nextStatus = nextPaidAmount >= nextAmount ? 'paid' : editRechargeStatus
+      : currentRechargeStatus === 'unpaid' && currentPaidAmount > 0
+        ? Math.min(currentPaidAmount, nextAmount)
+        : 0
+    const nextStatus = editRechargeStatus === 'paid' ? 'paid' : 'unpaid'
 
     if (!cleanService || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       console.log('Error editing recharge: service and a valid amount are required.')
@@ -2671,7 +2683,6 @@ function App() {
             </div>
           </div>
           <div className="rt-dashboard-tools-grid">
-            {renderMonthFilterPanel('rt-dashboard-tool-panel')}
             {renderExchangeRatePanel('rt-dashboard-tool-panel')}
             {renderGoogleSheetsBackupPanel('rt-dashboard-tool-panel')}
             {renderExportPanel('rt-dashboard-tool-panel')}
@@ -2681,22 +2692,11 @@ function App() {
         <details className="rt-mobile-dashboard-tools">
           <summary>Tools</summary>
           <div className="rt-list" style={styles.list}>
-            {renderMonthFilterPanel('rt-mobile-tool-panel')}
             {renderExchangeRatePanel('rt-mobile-tool-panel')}
             {renderGoogleSheetsBackupPanel('rt-mobile-tool-panel')}
             {renderExportPanel('rt-mobile-tool-panel')}
           </div>
         </details>
-
-        <section className="rt-dashboard-section rt-dashboard-summary-wrap" style={styles.section}>
-          <div className="rt-dashboard-section-header">
-            <div>
-              <h2 style={styles.sectionTitle}>Monthly Summary</h2>
-              <p style={styles.historyMeta}>Customers who still owe money for the selected period.</p>
-            </div>
-          </div>
-          {renderEndOfMonthSummary('rt-dashboard-summary-panel')}
-        </section>
       </div>
     )
   }
