@@ -1436,7 +1436,7 @@ function App() {
   async function handleRecordPaymentSubmit(event) {
     event.preventDefault()
 
-    const paymentAmount = Number(cleanLbpAmountInput(recordPaymentAmount))
+    const paymentAmount = Number(cleanLbpAmountInput(recordPaymentAmount)) * 1000
     const trimmedNotes = recordPaymentNotes.trim()
 
     if (!recordPaymentCustomerId || !Number.isFinite(paymentAmount) || paymentAmount <= 0) {
@@ -2175,7 +2175,7 @@ function App() {
       ? serviceNames
       : [includeExistingService, ...serviceNames]
     const isSelectorOpen = activeServiceSelectorId === selectorId
-    const searchValue = isSelectorOpen ? serviceSearchTerm : ''
+    const searchValue = isSelectorOpen ? serviceSearchTerm : value || ''
     const normalizedServiceSearch = serviceSearchTerm.trim().toLowerCase()
     const filteredServices = options.filter((service) =>
       !normalizedServiceSearch ||
@@ -2216,12 +2216,6 @@ function App() {
           placeholder="Search or choose service"
           style={styles.input}
         />
-
-        {value && (
-          <p className="rt-service-selected" style={styles.selectedText}>
-            Selected service: {value}
-          </p>
-        )}
 
         {isSelectorOpen && (
           <div className="rt-service-selector-list" style={styles.selectorList}>
@@ -2551,9 +2545,6 @@ function App() {
           >
             {isUpdatingExchangeRate ? 'Updating...' : 'Update Exchange Rate'}
           </button>
-          <button type="button" onClick={exportData} style={styles.quietButton}>
-            Export Data
-          </button>
         </div>
       </div>
     )
@@ -2629,58 +2620,83 @@ function App() {
   function renderDashboardPage() {
     return (
       <div className="rt-dashboard-page">
-        <section className="rt-dashboard-top-tools" style={styles.section}>
-          <div className="rt-grid" style={styles.grid}>
-            {renderMonthFilterPanel()}
-            {renderExchangeRatePanel('rt-dashboard-tool-panel')}
-            {renderGoogleSheetsBackupPanel('rt-dashboard-tool-panel')}
+        <section className="rt-dashboard-section rt-business-overview" style={styles.section}>
+          <div className="rt-dashboard-section-header">
+            <div>
+              <h2 style={styles.sectionTitle}>Business Overview</h2>
+              <p style={styles.historyMeta}>Showing: {selectedMonthLabel}</p>
+            </div>
+          </div>
+          <div className="rt-dashboard-grid" style={styles.dashboardGrid}>
+            <div className="rt-stat-card rt-stat-total" style={styles.statCard}>
+              <p style={styles.statLabel}>Total unpaid</p>
+              <p style={styles.statValue}>{formatLbp(totalUnpaid)}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>{formatUsdFromLbp(totalUnpaid, exchangeRate)}</p>
+            </div>
+            <div className="rt-stat-card rt-stat-normal" style={styles.statCard}>
+              <p style={styles.statLabel}>Normal unpaid</p>
+              <p style={styles.statValue}>{formatLbp(normalUnpaid)}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>{formatUsdFromLbp(normalUnpaid, exchangeRate)}</p>
+            </div>
+            <div className="rt-stat-card rt-stat-wholesale" style={styles.statCard}>
+              <p style={styles.statLabel}>Wholesale unpaid</p>
+              <p style={styles.statValue}>{formatLbp(wholesaleUnpaid)}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>{formatUsdFromLbp(wholesaleUnpaid, exchangeRate)}</p>
+            </div>
+            <div className="rt-stat-card rt-stat-recharges" style={styles.statCard}>
+              <p style={styles.statLabel}>Unpaid recharges</p>
+              <p style={styles.statValue}>{unpaidRecharges.length}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>Open recharge records</p>
+            </div>
+            <div className="rt-stat-card rt-stat-customers" style={styles.statCard}>
+              <p style={styles.statLabel}>Customers</p>
+              <p style={styles.statValue}>{customers.length}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>
+                {normalCustomers.length} normal / {wholesaleCustomers.length} wholesale
+              </p>
+            </div>
+            <div className="rt-stat-card rt-stat-rate" style={styles.statCard}>
+              <p style={styles.statLabel}>Exchange rate</p>
+              <p style={styles.statValue}>1 USD = {formattedCurrentRate} LBP</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>Current saved rate</p>
+            </div>
           </div>
         </section>
 
-        <section style={styles.section}>
-          <div className="rt-dashboard-grid" style={styles.dashboardGrid}>
-            <div className="rt-stat-card" style={styles.statCard}>
-              <p style={styles.statLabel}>Normal unpaid</p>
-              <p style={styles.statValue}>{formatLbp(normalUnpaid)}</p>
-              <p style={styles.historyMeta}>{formatUsdFromLbp(normalUnpaid, exchangeRate)}</p>
+        <section className="rt-dashboard-section rt-dashboard-top-tools" style={styles.section}>
+          <div className="rt-dashboard-section-header">
+            <div>
+              <h2 style={styles.sectionTitle}>Tools</h2>
+              <p style={styles.historyMeta}>Filter, update rates, export, and back up your data.</p>
             </div>
-            <div className="rt-stat-card" style={styles.statCard}>
-              <p style={styles.statLabel}>Wholesale unpaid</p>
-              <p style={styles.statValue}>{formatLbp(wholesaleUnpaid)}</p>
-              <p style={styles.historyMeta}>{formatUsdFromLbp(wholesaleUnpaid, exchangeRate)}</p>
-            </div>
-            <div className="rt-stat-card" style={styles.statCard}>
-              <p style={styles.statLabel}>Total unpaid LBP</p>
-              <p style={styles.statValue}>{formatLbp(totalUnpaid)}</p>
-            </div>
-            <div className="rt-stat-card" style={styles.statCard}>
-              <p style={styles.statLabel}>Total unpaid USD</p>
-              <p style={styles.statValue}>{formatUsdFromLbp(totalUnpaid, exchangeRate)}</p>
-            </div>
-            <div className="rt-stat-card" style={styles.statCard}>
-              <p style={styles.statLabel}>Customers</p>
-              <p style={styles.statValue}>{customers.length}</p>
-            </div>
-            <div className="rt-stat-card" style={styles.statCard}>
-              <p style={styles.statLabel}>Unpaid recharges</p>
-              <p style={styles.statValue}>{unpaidRecharges.length}</p>
-            </div>
-            <div className="rt-stat-card" style={styles.statCard}>
-              <p style={styles.statLabel}>Current exchange rate</p>
-              <p style={styles.statValue}>1 USD = {formattedCurrentRate} LBP</p>
-            </div>
+          </div>
+          <div className="rt-dashboard-tools-grid">
+            {renderMonthFilterPanel('rt-dashboard-tool-panel')}
+            {renderExchangeRatePanel('rt-dashboard-tool-panel')}
+            {renderGoogleSheetsBackupPanel('rt-dashboard-tool-panel')}
+            {renderExportPanel('rt-dashboard-tool-panel')}
           </div>
         </section>
 
         <details className="rt-mobile-dashboard-tools">
-          <summary>Exchange rate and backup</summary>
+          <summary>Tools</summary>
           <div className="rt-list" style={styles.list}>
+            {renderMonthFilterPanel('rt-mobile-tool-panel')}
             {renderExchangeRatePanel('rt-mobile-tool-panel')}
             {renderGoogleSheetsBackupPanel('rt-mobile-tool-panel')}
+            {renderExportPanel('rt-mobile-tool-panel')}
           </div>
         </details>
 
-        {renderEndOfMonthSummary()}
+        <section className="rt-dashboard-section rt-dashboard-summary-wrap" style={styles.section}>
+          <div className="rt-dashboard-section-header">
+            <div>
+              <h2 style={styles.sectionTitle}>Monthly Summary</h2>
+              <p style={styles.historyMeta}>Customers who still owe money for the selected period.</p>
+            </div>
+          </div>
+          {renderEndOfMonthSummary('rt-dashboard-summary-panel')}
+        </section>
       </div>
     )
   }
@@ -3321,6 +3337,20 @@ function App() {
     )
   }
 
+  function renderExportPanel(extraClassName = '') {
+    return (
+      <div className={`rt-panel rt-export-panel ${extraClassName}`} style={styles.panel}>
+        <h2 style={styles.sectionTitle}>Export Data</h2>
+        <p style={styles.historyMeta}>
+          Download customers and recharges as a CSV backup.
+        </p>
+        <button type="button" onClick={exportData} style={{ ...styles.quietButton, justifySelf: 'start' }}>
+          Export Data
+        </button>
+      </div>
+    )
+  }
+
   function renderRecordPaymentModal() {
     if (!recordPaymentCustomer) {
       return null
@@ -3352,14 +3382,14 @@ function App() {
           </div>
 
           <label style={styles.field}>
-            <span style={styles.label}>Payment amount (LBP)</span>
+            <span style={styles.label}>Payment amount (in thousands LBP)</span>
             <input
               ref={recordPaymentAmountInputRef}
               type="text"
               inputMode="numeric"
               value={recordPaymentAmount}
               onChange={(event) => setRecordPaymentAmount(cleanLbpAmountInput(event.target.value))}
-              placeholder="Example: 4000000"
+              placeholder="Example: 4000"
               style={styles.input}
             />
           </label>

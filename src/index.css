@@ -221,9 +221,129 @@ code {
   gap: 14px !important;
 }
 
+.rt-dashboard-section {
+  display: grid;
+  gap: 14px;
+}
+
+.rt-dashboard-section-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.rt-dashboard-section-header h2 {
+  margin-bottom: 4px !important;
+}
+
+.rt-dashboard-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.rt-dashboard-tool-panel {
+  padding: 14px !important;
+  gap: 10px !important;
+}
+
+.rt-dashboard-tool-panel h2 {
+  margin-bottom: 0 !important;
+  font-size: 18px !important;
+}
+
+.rt-dashboard-tool-panel p {
+  font-size: 14px;
+}
+
 .rt-stat-card {
   min-height: 118px;
   border-color: rgba(255, 255, 255, 0.08) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.rt-stat-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--stat-accent, var(--accent));
+  opacity: 0.85;
+}
+
+.rt-stat-total {
+  --stat-accent: #f97316;
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.11), var(--social-bg) 58%) !important;
+}
+
+.rt-stat-normal {
+  --stat-accent: #38bdf8;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.1), var(--social-bg) 58%) !important;
+}
+
+.rt-stat-wholesale {
+  --stat-accent: #aa3bff;
+  background: linear-gradient(135deg, rgba(170, 59, 255, 0.12), var(--social-bg) 58%) !important;
+}
+
+.rt-stat-recharges {
+  --stat-accent: #f87171;
+}
+
+.rt-stat-customers {
+  --stat-accent: #2dd4bf;
+  background: linear-gradient(135deg, rgba(45, 212, 191, 0.1), var(--social-bg) 58%) !important;
+}
+
+.rt-stat-rate {
+  --stat-accent: #facc15;
+  background: linear-gradient(135deg, rgba(250, 204, 21, 0.1), var(--social-bg) 58%) !important;
+}
+
+.rt-stat-card .rt-stat-subvalue {
+  color: #a9b0c2 !important;
+  font-size: 14px !important;
+  font-weight: 650 !important;
+}
+
+.rt-stat-total p:nth-child(2) {
+  color: #fb923c !important;
+}
+
+.rt-stat-normal p:nth-child(2) {
+  color: #7dd3fc !important;
+}
+
+.rt-stat-wholesale p:nth-child(2) {
+  color: #c084fc !important;
+}
+
+.rt-stat-customers p:nth-child(2) {
+  color: #5eead4 !important;
+}
+
+.rt-stat-rate p:nth-child(2) {
+  color: #fde68a !important;
+  font-size: 22px !important;
+}
+
+.rt-dashboard-summary-wrap {
+  padding-top: 4px;
+}
+
+.rt-dashboard-summary-wrap > .rt-summary-section {
+  margin-bottom: 0 !important;
+}
+
+.rt-dashboard-summary-panel > .rt-panel {
+  padding: 14px !important;
+}
+
+.rt-dashboard-summary-panel .rt-history-card {
+  padding: 12px !important;
 }
 
 .rt-stat-card p:first-child {
@@ -616,6 +736,10 @@ code {
   .rt-dashboard-grid {
     grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)) !important;
   }
+
+  .rt-business-overview .rt-dashboard-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
 }
 
 @media (max-width: 1024px) {
@@ -992,18 +1116,34 @@ code {
   }
 
   .rt-dashboard-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 8px !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
   }
 
-  .rt-dashboard-page .rt-dashboard-top-tools,
-  .rt-dashboard-page > .rt-summary-section {
+  .rt-dashboard-section {
+    gap: 10px;
+  }
+
+  .rt-dashboard-section-header {
+    display: block;
+  }
+
+  .rt-dashboard-section-header h2 {
+    font-size: 18px !important;
+    margin-bottom: 2px !important;
+  }
+
+  .rt-business-overview {
+    margin-bottom: 16px !important;
+  }
+
+  .rt-dashboard-page .rt-dashboard-top-tools {
     display: none !important;
   }
 
   .rt-mobile-dashboard-tools {
     display: block;
-    margin-bottom: 18px;
+    margin-bottom: 16px;
   }
 
   .rt-mobile-dashboard-tools summary {
@@ -1021,6 +1161,22 @@ code {
 
   .rt-mobile-dashboard-tools[open] summary {
     margin-bottom: 10px;
+  }
+
+  .rt-mobile-dashboard-tools .rt-panel {
+    box-shadow: none !important;
+  }
+
+  .rt-dashboard-summary-wrap {
+    margin-bottom: 0 !important;
+  }
+
+  .rt-dashboard-summary-wrap > .rt-dashboard-section-header {
+    margin-bottom: 8px;
+  }
+
+  .rt-dashboard-summary-panel {
+    margin-bottom: 0 !important;
   }
 
   .rt-grid {
