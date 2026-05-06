@@ -521,6 +521,18 @@ code {
   gap: 10px !important;
 }
 
+.rt-filter-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rt-filter-buttons button[aria-pressed='true'] {
+  background: var(--accent) !important;
+  border-color: var(--accent-border) !important;
+  color: #fff !important;
+}
+
 .rt-stat-card p:first-child {
   color: var(--text) !important;
   font-size: 13px !important;
@@ -872,6 +884,7 @@ code {
   }
 
   .rt-actions button,
+  .rt-filter-buttons button,
   .rt-sidebar-footer button,
   .rt-auth-card button {
     width: 100% !important;

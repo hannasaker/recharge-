@@ -746,6 +746,7 @@ function App() {
   const [customerNotes, setCustomerNotes] = useState('')
   const [customerType, setCustomerType] = useState('normal')
   const [searchTerm, setSearchTerm] = useState('')
+  const [customerBalanceFilter, setCustomerBalanceFilter] = useState('all')
   const [formError, setFormError] = useState('')
   const [customerSuccess, setCustomerSuccess] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -2790,14 +2791,19 @@ function App() {
     const isWholesalePage = customerTypeFilter === 'wholesale'
     const pageCustomers = isWholesalePage ? wholesaleCustomers : normalCustomers
     const filteredPageCustomers = isWholesalePage ? filteredWholesaleCustomers : filteredNormalCustomers
-    const visiblePageCustomers = isMobileView
-      ? filteredPageCustomers.slice(0, mobileListLimit)
+    const balanceFilteredCustomers = customerBalanceFilter === 'unpaid'
+      ? filteredPageCustomers.filter((customer) => (unpaidBalances[String(customer.id)] || 0) > 0)
       : filteredPageCustomers
+    const visiblePageCustomers = isMobileView
+      ? balanceFilteredCustomers.slice(0, mobileListLimit)
+      : balanceFilteredCustomers
     const pageTitle = isWholesalePage ? 'Wholesale' : 'Customers & Balances'
     const emptyMessage = isWholesalePage ? 'No wholesale customers yet.' : 'No customers yet.'
-    const noMatchMessage = isWholesalePage
-      ? 'No wholesale customers match your search.'
-      : 'No customers match your search.'
+    const noMatchMessage = customerBalanceFilter === 'unpaid'
+      ? 'No unpaid customers match this view.'
+      : isWholesalePage
+        ? 'No wholesale customers match your search.'
+        : 'No customers match your search.'
 
     return (
       <section style={styles.section}>
@@ -2813,6 +2819,24 @@ function App() {
                 style={styles.input}
               />
             </label>
+            <div className="rt-filter-buttons" role="group" aria-label="Customer balance filter">
+              <button
+                type="button"
+                aria-pressed={customerBalanceFilter === 'all'}
+                onClick={() => setCustomerBalanceFilter('all')}
+                style={customerBalanceFilter === 'all' ? styles.smallButton : styles.quietButton}
+              >
+                All Customers
+              </button>
+              <button
+                type="button"
+                aria-pressed={customerBalanceFilter === 'unpaid'}
+                onClick={() => setCustomerBalanceFilter('unpaid')}
+                style={customerBalanceFilter === 'unpaid' ? styles.smallButton : styles.quietButton}
+              >
+                Unpaid Customers
+              </button>
+            </div>
           </div>
 
           <div className="rt-list rt-customer-list" style={styles.list}>
@@ -3063,7 +3087,7 @@ function App() {
               <p style={styles.empty}>{emptyMessage}</p>
             )}
 
-            {pageCustomers.length > 0 && filteredPageCustomers.length === 0 && (
+            {pageCustomers.length > 0 && balanceFilteredCustomers.length === 0 && (
               <p style={styles.empty}>{noMatchMessage}</p>
             )}
           </div>
