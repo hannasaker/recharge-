@@ -3448,29 +3448,43 @@ function App() {
     let statementContent = null
 
     if (isStatementVisible) {
-      const unpaidCustomerRecharges = customerRecharges.filter(
-        (recharge) => getRechargeBalance(recharge) > 0
-      )
+      const unpaidCustomerRecharges = [...customerRecharges]
+        .filter((recharge) => getRechargeBalance(recharge) > 0)
+        .sort((firstRecharge, secondRecharge) => {
+          const firstDate = new Date(firstRecharge.created_at || 0).getTime()
+          const secondDate = new Date(secondRecharge.created_at || 0).getTime()
+
+          return firstDate - secondDate
+        })
       const statementTotal = unpaidCustomerRecharges.reduce(
         (total, recharge) => total + getRechargeBalance(recharge),
         0
       )
-      const messageServiceTotals = unpaidCustomerRecharges.reduce((totals, recharge) => {
-        const service = recharge.service || 'Recharge'
+      const messageLines = unpaidCustomerRecharges.flatMap((recharge, index) => {
+        const note = String(recharge.notes || '').trim().replace(/\s+/g, ' ')
+        const noteText = note ? ` - Note: ${note}` : ''
+        const remainingBalance = getRechargeBalance(recharge)
+        const lines = [
+          `${index + 1}. ${recharge.service || 'Recharge'}${noteText}`,
+          `   ${formatLbp(remainingBalance)} / ${formatUsdFromLbpDetailed(remainingBalance, exchangeRate)}`,
+        ]
 
-        totals[service] = (totals[service] || 0) + getRechargeBalance(recharge)
-        return totals
-      }, {})
-      const messageLines = Object.entries(messageServiceTotals).map(
-        ([service, amount]) => `- ${service}: ${formatLbp(amount)}`
-      )
+        return index < unpaidCustomerRecharges.length - 1 ? [...lines, ''] : lines
+      })
       const whatsappMessage = [
         `Hello ${detailCustomer.name || 'Customer'},`,
-        'Your recharge balance is:',
+        '',
+        'Your remaining balance:',
         '',
         ...(messageLines.length > 0 ? messageLines : ['No unpaid recharges.']),
         '',
-        `Total: ${formatLbp(statementTotal)} (${formatUsdFromLbpDetailed(statementTotal, exchangeRate)})`,
+        'Total:',
+        `${formatLbp(statementTotal)} / ${formatUsdFromLbpDetailed(statementTotal, exchangeRate)}`,
+        '',
+        'USD rate:',
+        `1 USD = ${formattedCurrentRate} LBP`,
+        '',
+        'Thank you.',
       ].join('\n')
 
       statementContent = (
@@ -3491,7 +3505,12 @@ function App() {
                   <p style={styles.historyTitle}>
                     {formattedDate} - {recharge.service || 'Recharge'}
                   </p>
-                  <p style={styles.unpaidText}>{formatLbp(getRechargeBalance(recharge))}</p>
+                  {recharge.notes && (
+                    <p style={styles.notes}>Note: {recharge.notes}</p>
+                  )}
+                  <p style={styles.unpaidText}>
+                    {formatLbp(getRechargeBalance(recharge))} / {formatUsdFromLbpDetailed(getRechargeBalance(recharge), exchangeRate)}
+                  </p>
                   {renderPartialPaymentInfo(recharge)}
                 </div>
               )
