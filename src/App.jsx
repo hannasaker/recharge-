@@ -10,7 +10,7 @@ const customerTypes = [
 ]
 const pages = [
   { id: 'dashboard', label: 'Dashboard', mobileLabel: 'Dashboard' },
-  { id: 'monthlySummary', label: 'Monthly Summary', mobileLabel: 'Monthly' },
+  { id: 'transactions', label: 'Transactions', mobileLabel: 'Transactions' },
   { id: 'addCustomer', label: 'Add Customer', mobileLabel: 'Add' },
   { id: 'customers', label: 'Customers & Balances', mobileLabel: 'Customers' },
   { id: 'wholesale', label: 'Wholesale', mobileLabel: 'Wholesale' },
@@ -211,6 +211,67 @@ function rechargeMatchesMonth(recharge, monthFilter, customMonth) {
   return getMonthValue(createdAt) === selectedMonth
 }
 
+function getDateOnlyValue(date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+
+  return `${year}-${month}-${day}`
+}
+
+function rechargeMatchesTransactionFilter(recharge, transactionFilter, transactionCustomMonth) {
+  if (transactionFilter === 'all') {
+    return true
+  }
+
+  const createdAt = recharge?.created_at ? new Date(recharge.created_at) : null
+
+  if (!createdAt || Number.isNaN(createdAt.getTime())) {
+    return false
+  }
+
+  if (transactionFilter === 'today') {
+    return getDateOnlyValue(createdAt) === getDateOnlyValue()
+  }
+
+  if (transactionFilter === 'last7') {
+    const now = new Date()
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+
+    return createdAt >= sevenDaysAgo && createdAt <= now
+  }
+
+  if (transactionFilter === 'thisMonth') {
+    return getMonthValue(createdAt) === getMonthValue()
+  }
+
+  if (transactionFilter === 'custom') {
+    return getMonthValue(createdAt) === transactionCustomMonth
+  }
+
+  return false
+}
+
+function getTransactionFilterLabel(transactionFilter, transactionCustomMonth) {
+  if (transactionFilter === 'today') {
+    return 'Today'
+  }
+
+  if (transactionFilter === 'last7') {
+    return 'Last 7 days'
+  }
+
+  if (transactionFilter === 'thisMonth') {
+    return 'This month'
+  }
+
+  if (transactionFilter === 'custom') {
+    return formatMonthLabel(transactionCustomMonth)
+  }
+
+  return 'All time'
+}
+
 function getThousandsFromLbp(amount) {
   return String((Number(amount) || 0) / 1000)
 }
@@ -246,6 +307,20 @@ function getRechargePaidAmount(recharge) {
 
 function getRechargeBalance(recharge) {
   return Math.max(getRechargeAmount(recharge) - getRechargePaidAmount(recharge), 0)
+}
+
+function getPaymentAmount(payment) {
+  return Math.round(Number(payment?.amount) || 0)
+}
+
+function logPaymentRechargeIdHelp(error) {
+  const errorText = String(`${error?.message || ''} ${error?.details || ''}`).toLowerCase()
+
+  if (errorText.includes('recharge_id')) {
+    console.log(
+      'payments.recharge_id is required for linked payment cleanup. Run: alter table payments add column if not exists recharge_id uuid references recharges(id) on delete cascade;'
+    )
+  }
 }
 
 function appendPaymentNote(existingNotes, paymentNote, appliedAmount) {
@@ -724,6 +799,7 @@ function App() {
   const [activePage, setActivePage] = useState('dashboard')
   const [customers, setCustomers] = useState([])
   const [recharges, setRecharges] = useState([])
+  const [payments, setPayments] = useState([])
   const [services, setServices] = useState([])
   const [exchangeRate, setExchangeRate] = useState(() =>
     getSavedValue(exchangeRateStorageKey, defaultExchangeRate)
@@ -736,8 +812,10 @@ function App() {
   const [isBackingUpSheets, setIsBackingUpSheets] = useState(false)
   const [sheetsBackupMessage, setSheetsBackupMessage] = useState('')
   const [sheetsBackupError, setSheetsBackupError] = useState('')
-  const [monthFilter, setMonthFilter] = useState('all')
-  const [customMonth, setCustomMonth] = useState(() => getMonthValue())
+  const [monthFilter] = useState('all')
+  const [customMonth] = useState(() => getMonthValue())
+  const [transactionFilter, setTransactionFilter] = useState('today')
+  const [transactionCustomMonth, setTransactionCustomMonth] = useState(() => getMonthValue())
   const [newServiceName, setNewServiceName] = useState('')
   const [serviceError, setServiceError] = useState('')
   const [serviceSuccess, setServiceSuccess] = useState('')
@@ -818,6 +896,18 @@ function App() {
     }
   }, [])
 
+  const fetchPayments = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('payments')
+      .select('*')
+
+    if (error) {
+      console.log('Error fetching payments:', error)
+    } else {
+      setPayments(data || [])
+    }
+  }, [])
+
   async function seedDefaultServices() {
     const { error } = await supabase
       .from('services')
@@ -850,12 +940,13 @@ function App() {
   }
 
   const refreshData = useCallback(async () => {
-    await Promise.all([fetchCustomers(), fetchRecharges()])
-  }, [fetchCustomers, fetchRecharges])
+    await Promise.all([fetchCustomers(), fetchRecharges(), fetchPayments()])
+  }, [fetchCustomers, fetchPayments, fetchRecharges])
 
   function clearAppData() {
     setCustomers([])
     setRecharges([])
+    setPayments([])
     setServices([])
     setRechargeCustomerId('')
     setCustomerSelectorQuery('')
@@ -1124,8 +1215,9 @@ function App() {
     Promise.all([
       supabase.from('customers').select('*'),
       supabase.from('recharges').select('*'),
+      supabase.from('payments').select('*'),
       supabase.from('services').select('*'),
-    ]).then(([customersResult, rechargesResult, servicesResult]) => {
+    ]).then(([customersResult, rechargesResult, paymentsResult, servicesResult]) => {
       if (!isCurrent) {
         return
       }
@@ -1140,6 +1232,12 @@ function App() {
         console.log('Error fetching recharges:', rechargesResult.error)
       } else {
         setRecharges(rechargesResult.data || [])
+      }
+
+      if (paymentsResult.error) {
+        console.log('Error fetching payments:', paymentsResult.error)
+      } else {
+        setPayments(paymentsResult.data || [])
       }
 
       if (servicesResult.error) {
@@ -1271,6 +1369,53 @@ function App() {
         notes: notes.trim() || null,
         status: 'unpaid',
       }])
+  }
+
+  async function addPaymentToSupabase(customerId, amount, notes = '', rechargeId = null) {
+    const cleanAmount = Math.round(Number(amount) || 0)
+    const trimmedNotes = String(notes || '').trim()
+
+    if (!customerId || cleanAmount <= 0) {
+      return { error: { message: 'A customer and valid payment amount are required.' } }
+    }
+
+    const paymentRow = {
+      customer_id: customerId,
+      amount: cleanAmount,
+      notes: trimmedNotes || null,
+    }
+
+    if (rechargeId) {
+      paymentRow.recharge_id = rechargeId
+    }
+
+    const result = await supabase
+      .from('payments')
+      .insert([paymentRow])
+
+    if (result.error) {
+      logPaymentRechargeIdHelp(result.error)
+    }
+
+    return result
+  }
+
+  async function deleteLinkedRechargePayments(rechargeId) {
+    if (!rechargeId) {
+      return { error: null }
+    }
+
+    const result = await supabase
+      .from('payments')
+      .delete()
+      .eq('recharge_id', rechargeId)
+
+    if (result.error) {
+      console.log('Error deleting linked payment transactions:', result.error)
+      logPaymentRechargeIdHelp(result.error)
+    }
+
+    return result
   }
 
   async function handleCustomerSubmit(event) {
@@ -1476,7 +1621,8 @@ function App() {
         return
       }
 
-      let remainingPayment = Math.min(paymentAmount, currentBalance)
+      const appliedPaymentAmount = Math.min(paymentAmount, currentBalance)
+      let remainingPayment = appliedPaymentAmount
       const rechargeUpdates = []
 
       for (const recharge of customerOpenRecharges) {
@@ -1536,9 +1682,19 @@ function App() {
           return updatedRecharge || recharge
         })
       ))
-      setRecordPaymentSuccess(`Payment recorded: ${formatLbp(Math.min(paymentAmount, currentBalance))}`)
+      const { error: paymentError } = await addPaymentToSupabase(
+        recordPaymentCustomerId,
+        appliedPaymentAmount,
+        trimmedNotes
+      )
+
+      if (paymentError) {
+        console.log('Error creating payment transaction:', paymentError)
+      }
+
+      setRecordPaymentSuccess(`Payment recorded: ${formatLbp(appliedPaymentAmount)}`)
       closeRecordPayment()
-      await fetchRecharges()
+      await Promise.all([fetchRecharges(), fetchPayments()])
     } catch (error) {
       console.log('Error recording payment:', error)
       setRecordPaymentError(error.message || 'Could not record payment.')
@@ -1634,7 +1790,21 @@ function App() {
 
   const handleMarkRechargePaid = useCallback(async (rechargeId) => {
     const recharge = recharges.find((currentRecharge) => String(currentRecharge.id) === String(rechargeId))
+    const customer = customers.find((currentCustomer) => (
+      String(currentCustomer.id) === String(recharge?.customer_id)
+    ))
+    const serviceName = recharge?.service || 'this recharge'
+    const customerText = customer?.name ? ` for ${customer.name}` : ''
+    const confirmed = window.confirm(
+      `Are you sure you want to mark ${serviceName}${customerText} as paid?`
+    )
+
+    if (!confirmed) {
+      return
+    }
+
     const paidAmount = getRechargeAmount(recharge)
+    const remainingAmount = getRechargeBalance(recharge)
 
     try {
       setPayingRechargeId(String(rechargeId))
@@ -1657,12 +1827,24 @@ function App() {
               : currentRecharge
           ))
         ))
-        fetchRecharges()
+        await deleteLinkedRechargePayments(rechargeId)
+        const { error: paymentError } = await addPaymentToSupabase(
+          recharge?.customer_id,
+          remainingAmount,
+          'Marked recharge as paid',
+          rechargeId
+        )
+
+        if (paymentError) {
+          console.log('Error creating payment transaction:', paymentError)
+        }
+
+        await Promise.all([fetchRecharges(), fetchPayments()])
       }
     } finally {
       setPayingRechargeId('')
     }
-  }, [fetchRecharges, recharges])
+  }, [customers, fetchPayments, fetchRecharges, recharges])
 
   const handleMarkAllPaid = useCallback(async (customerId) => {
     const customer = customers.find((currentCustomer) => String(currentCustomer.id) === String(customerId))
@@ -1679,6 +1861,10 @@ function App() {
       String(recharge.customer_id) === String(customerId) &&
       getRechargeBalance(recharge) > 0
     ))
+    const totalOpenBalance = customerOpenRecharges.reduce(
+      (total, recharge) => total + getRechargeBalance(recharge),
+      0
+    )
     const rechargeUpdates = customerOpenRecharges.map((recharge) => ({
       id: recharge.id,
       data: {
@@ -1718,12 +1904,21 @@ function App() {
             return updateData ? { ...recharge, ...updateData } : recharge
           })
         ))
-        fetchRecharges()
+        const { error: paymentError } = await addPaymentToSupabase(
+          customerId,
+          totalOpenBalance
+        )
+
+        if (paymentError) {
+          console.log('Error creating payment transaction:', paymentError)
+        }
+
+        await Promise.all([fetchRecharges(), fetchPayments()])
       }
     } finally {
       setPayingCustomerId('')
     }
-  }, [customers, fetchRecharges, recharges])
+  }, [customers, fetchPayments, fetchRecharges, recharges])
 
   const startEditingRecharge = useCallback((recharge) => {
     setEditingRechargeId(String(recharge.id))
@@ -1755,12 +1950,25 @@ function App() {
     const currentRecharge = recharges.find((recharge) => String(recharge.id) === String(editingRechargeId))
     const currentRechargeStatus = String(currentRecharge?.status || '').toLowerCase()
     const currentPaidAmount = getRechargePaidAmount(currentRecharge)
+    const currentAmount = getRechargeAmount(currentRecharge)
+    const isCurrentlyPaid = currentRechargeStatus === 'paid' || getRechargeBalance(currentRecharge) <= 0
     const nextPaidAmount = editRechargeStatus === 'paid'
       ? nextAmount
       : currentRechargeStatus === 'unpaid' && currentPaidAmount > 0
         ? Math.min(currentPaidAmount, nextAmount)
         : 0
     const nextStatus = editRechargeStatus === 'paid' ? 'paid' : 'unpaid'
+    const hasLinkedPayment = payments.some((payment) => (
+      String(payment.recharge_id || '') === String(editingRechargeId)
+    ))
+    const shouldDeleteLinkedPayments = isCurrentlyPaid && nextStatus === 'unpaid'
+    const shouldCreateLinkedPayment = !isCurrentlyPaid && nextStatus === 'paid'
+    const shouldReplaceLinkedPayment = (
+      isCurrentlyPaid &&
+      nextStatus === 'paid' &&
+      hasLinkedPayment &&
+      nextAmount !== currentAmount
+    )
 
     if (!cleanService || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       console.log('Error editing recharge: service and a valid amount are required.')
@@ -1785,8 +1993,26 @@ function App() {
         console.log('Error editing recharge:', error)
       } else {
         setLastSelectedService(cleanService)
+
+        if (shouldDeleteLinkedPayments || shouldCreateLinkedPayment || shouldReplaceLinkedPayment) {
+          await deleteLinkedRechargePayments(editingRechargeId)
+        }
+
+        if (shouldCreateLinkedPayment || shouldReplaceLinkedPayment) {
+          const { error: paymentError } = await addPaymentToSupabase(
+            currentRecharge?.customer_id,
+            nextAmount,
+            'Marked recharge as paid',
+            editingRechargeId
+          )
+
+          if (paymentError) {
+            console.log('Error creating payment transaction:', paymentError)
+          }
+        }
+
         cancelEditingRecharge()
-        await fetchRecharges()
+        await Promise.all([fetchRecharges(), fetchPayments()])
       }
     } finally {
       setIsRechargeEditSubmitting(false)
@@ -1801,6 +2027,8 @@ function App() {
     try {
       setDeletingRechargeId(String(rechargeId))
 
+      await deleteLinkedRechargePayments(rechargeId)
+
       const { error } = await supabase
         .from('recharges')
         .delete()
@@ -1809,12 +2037,12 @@ function App() {
       if (error) {
         console.log('Error deleting recharge:', error)
       } else {
-        await fetchRecharges()
+        await Promise.all([fetchRecharges(), fetchPayments()])
       }
     } finally {
       setDeletingRechargeId('')
     }
-  }, [fetchRecharges])
+  }, [fetchPayments, fetchRecharges])
 
   async function handleAddService(event) {
     event.preventDefault()
@@ -1973,33 +2201,51 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  function exportMonthSummary() {
+  function exportTransactions() {
     const rows = [
       [
-        'selected_period',
-        'customer_name',
-        'phone',
-        'customer_type',
-        'total_unpaid_lbp',
-        'total_unpaid_usd',
+        'Type',
+        'Date',
+        'Customer',
+        'Customer Type',
+        'Service',
+        'Amount LBP',
+        'Amount USD',
+        'Status',
+        'Notes',
       ],
-      ...monthSummaryCustomers.map(({ customer, balance }) => [
-        selectedMonthLabel,
-        customer.name || '',
-        getPhoneDigits(customer.phone),
-        getCustomerType(customer),
-        Math.round(Number(balance) || 0),
-        formatUsdFromLbpDetailed(balance, exchangeRate).replace('$', ''),
-      ]),
+      ...filteredTransactions.map((transaction) => {
+        const record = transaction.type === 'payment' ? transaction.payment : transaction.recharge
+        const customer = customersById[String(record.customer_id)]
+        const amount = transaction.type === 'payment'
+          ? getPaymentAmount(transaction.payment)
+          : getRechargeAmount(transaction.recharge)
+
+        return [
+          transaction.type === 'payment' ? 'Payment' : 'Recharge',
+          formatBackupDate(record.created_at),
+          customer?.name || '',
+          customer ? getCustomerTypeLabel(customer) : '',
+          transaction.type === 'payment' ? '' : transaction.recharge.service || '',
+          formatBackupLbp(amount),
+          formatBackupUsd(amount, exchangeRate),
+          transaction.type === 'payment'
+            ? 'paid'
+            : getRechargeBalance(transaction.recharge) <= 0 ? 'paid' : 'unpaid',
+          record.notes || '',
+        ]
+      }),
     ]
     const csv = rows.map((row) => row.map(escapeCsv).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    const fileNameMonth = getSelectedMonthValue(monthFilter, customMonth) || 'all-time'
+    const fileNamePeriod = transactionFilter === 'custom'
+      ? transactionCustomMonth || 'custom-month'
+      : transactionFilter
 
     link.href = url
-    link.download = `end-of-month-summary-${fileNameMonth}.csv`
+    link.download = `transactions-${fileNamePeriod}.csv`
     link.click()
     URL.revokeObjectURL(url)
   }
@@ -2034,6 +2280,65 @@ function App() {
       return secondDate - firstDate
     })
   ), [visibleRecharges])
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
+  const filteredTransactions = useMemo(() => (
+    [
+      ...recharges
+      .filter((recharge) => rechargeMatchesTransactionFilter(
+        recharge,
+        transactionFilter,
+        transactionCustomMonth
+      ))
+      .map((recharge) => ({
+        id: `recharge-${recharge.id}`,
+        type: 'recharge',
+        created_at: recharge.created_at,
+        recharge,
+      })),
+      ...payments
+        .filter((payment) => rechargeMatchesTransactionFilter(
+          payment,
+          transactionFilter,
+          transactionCustomMonth
+        ))
+        .map((payment) => ({
+          id: `payment-${payment.id}`,
+          type: 'payment',
+          created_at: payment.created_at,
+          payment,
+        })),
+    ].sort((firstTransaction, secondTransaction) => {
+        const firstDate = new Date(firstTransaction.created_at || 0).getTime()
+        const secondDate = new Date(secondTransaction.created_at || 0).getTime()
+
+        return secondDate - firstDate
+      })
+  ), [payments, recharges, transactionCustomMonth, transactionFilter])
+  const totalRechargeAmount = filteredTransactions.reduce(
+    (total, transaction) => (
+      transaction.type === 'recharge'
+        ? total + getRechargeAmount(transaction.recharge)
+        : total
+    ),
+    0
+  )
+  const totalPaidAmount = filteredTransactions.reduce(
+    (total, transaction) => (
+      transaction.type === 'payment'
+        ? total + getPaymentAmount(transaction.payment)
+        : total
+    ),
+    0
+  )
+  const totalRemainingAmount = filteredTransactions.reduce(
+    (total, transaction) => (
+      transaction.type === 'recharge'
+        ? total + getRechargeBalance(transaction.recharge)
+        : total
+    ),
+    0
+  )
+  const transactionCount = filteredTransactions.length
   const unpaidRecharges = useMemo(() => (
     visibleRecharges.filter((recharge) => getRechargeBalance(recharge) > 0)
   ), [visibleRecharges])
@@ -2068,6 +2373,7 @@ function App() {
     )
   ), [unpaidBalances])
   const selectedMonthLabel = getSelectedMonthLabel(monthFilter, customMonth)
+  const transactionFilterLabel = getTransactionFilterLabel(transactionFilter, transactionCustomMonth)
   const exchangeRateNumber = Number(exchangeRate)
   const formattedCurrentRate = Number.isFinite(exchangeRateNumber) && exchangeRateNumber > 0
     ? exchangeRateNumber.toLocaleString('en-US')
@@ -2142,14 +2448,6 @@ function App() {
       )
     })
   ), [normalizedSearchTerm, searchDigits, wholesaleCustomers])
-  // eslint-disable-next-line react-hooks/preserve-manual-memoization
-  const monthSummaryCustomers = useMemo(() => (
-    sortedCustomers.flatMap((customer) => {
-      const balance = unpaidBalances[String(customer.id)] || 0
-
-      return balance > 0 ? [{ customer, balance }] : []
-    })
-  ), [sortedCustomers, unpaidBalances])
   const selectorQuery = customerSelectorQuery.trim().toLowerCase()
   const selectorDigits = getPhoneDigits(customerSelectorQuery)
   const filteredSelectorCustomers = useMemo(() => (
@@ -2488,41 +2786,6 @@ function App() {
     )
   }
 
-  function renderMonthFilterPanel(extraClassName = '') {
-    return (
-      <div className={`rt-panel rt-month-filter-panel ${extraClassName}`} style={styles.panel}>
-        <h2 style={styles.sectionTitle}>Month Filter</h2>
-        <label style={styles.field}>
-          <span style={styles.label}>Selected period</span>
-          <select
-            value={monthFilter}
-            onChange={(event) => setMonthFilter(event.target.value)}
-            style={styles.input}
-          >
-            <option value="all">All time</option>
-            <option value="this">This month</option>
-            <option value="last">Last month</option>
-            <option value="custom">Custom month</option>
-          </select>
-        </label>
-
-        {monthFilter === 'custom' && (
-          <label style={styles.field}>
-            <span style={styles.label}>Custom month</span>
-            <input
-              type="month"
-              value={customMonth}
-              onChange={(event) => setCustomMonth(event.target.value)}
-              style={styles.input}
-            />
-          </label>
-        )}
-
-        <p style={styles.historyMeta}>Showing: {selectedMonthLabel}</p>
-      </div>
-    )
-  }
-
   function renderExchangeRatePanel(extraClassName = '') {
     return (
       <div className={`rt-panel rt-exchange-panel ${extraClassName}`} style={styles.panel}>
@@ -2590,43 +2853,39 @@ function App() {
     )
   }
 
-  function renderEndOfMonthSummary(extraClassName = '') {
+  function renderTransactionFilterPanel(extraClassName = '') {
     return (
-      <section className={`rt-summary-section ${extraClassName}`} style={styles.section}>
-        <div className="rt-panel" style={styles.panel}>
-          <div className="rt-card-top" style={styles.cardTop}>
-            <div>
-              <h2 style={styles.sectionTitle}>End of Month Summary</h2>
-              <p style={styles.historyMeta}>
-                Customers who still owe money for {selectedMonthLabel}.
-              </p>
-            </div>
-            <button type="button" onClick={exportMonthSummary} style={styles.quietButton}>
-              Export Selected Month Summary
-            </button>
-          </div>
+      <div className={`rt-panel rt-transaction-filter-panel ${extraClassName}`} style={styles.panel}>
+        <h2 style={styles.sectionTitle}>Transaction Filter</h2>
+        <label style={styles.field}>
+          <span style={styles.label}>Selected period</span>
+          <select
+            value={transactionFilter}
+            onChange={(event) => setTransactionFilter(event.target.value)}
+            style={styles.input}
+          >
+            <option value="today">Today</option>
+            <option value="last7">Last 7 days</option>
+            <option value="thisMonth">This month</option>
+            <option value="custom">Custom month</option>
+            <option value="all">All time</option>
+          </select>
+        </label>
 
-          <div className="rt-list rt-summary-list" style={styles.list}>
-            {monthSummaryCustomers.map(({ customer, balance }) => (
-              <div className="rt-history-card" key={customer.id} style={styles.historyItem}>
-                <div className="rt-card-top" style={styles.cardTop}>
-                  <div>
-                    <p style={styles.historyTitle}>{customer.name}</p>
-                    <p style={styles.phone}>{formatStoredPhone(customer.phone)}</p>
-                  </div>
-                  <p style={styles.unpaidText}>
-                    {formatLbp(balance)} / {formatUsdFromLbp(balance, exchangeRate)}
-                  </p>
-                </div>
-              </div>
-            ))}
+        {transactionFilter === 'custom' && (
+          <label style={styles.field}>
+            <span style={styles.label}>Custom month</span>
+            <input
+              type="month"
+              value={transactionCustomMonth}
+              onChange={(event) => setTransactionCustomMonth(event.target.value)}
+              style={styles.input}
+            />
+          </label>
+        )}
 
-            {monthSummaryCustomers.length === 0 && (
-              <p style={styles.empty}>No unpaid balances for this period.</p>
-            )}
-          </div>
-        </div>
-      </section>
+        <p style={styles.historyMeta}>Showing: {transactionFilterLabel}</p>
+      </div>
     )
   }
 
@@ -2702,13 +2961,113 @@ function App() {
     )
   }
 
-  function renderMonthlySummaryPage() {
+  function renderTransactionsPage() {
     return (
-      <div className="rt-monthly-summary-page">
+      <div className="rt-transactions-page">
         <section style={styles.section}>
-          {renderMonthFilterPanel('rt-mobile-summary-filter')}
+          {renderTransactionFilterPanel()}
         </section>
-        {renderEndOfMonthSummary('rt-mobile-summary-section')}
+
+        <section style={styles.section}>
+          <div className="rt-dashboard-grid" style={styles.dashboardGrid}>
+            <div className="rt-stat-card rt-stat-wholesale" style={styles.statCard}>
+              <p style={styles.statLabel}>Total Recharged</p>
+              <p style={styles.statValue}>{formatLbp(totalRechargeAmount)}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>
+                {formatUsdFromLbp(totalRechargeAmount, exchangeRate)}
+              </p>
+            </div>
+            <div className="rt-stat-card rt-stat-customers" style={styles.statCard}>
+              <p style={styles.statLabel}>Total Paid</p>
+              <p style={styles.statValue}>{formatLbp(totalPaidAmount)}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>
+                {formatUsdFromLbp(totalPaidAmount, exchangeRate)}
+              </p>
+            </div>
+            <div className="rt-stat-card rt-stat-total" style={styles.statCard}>
+              <p style={styles.statLabel}>Total Unpaid / Remaining</p>
+              <p style={styles.statValue}>{formatLbp(totalRemainingAmount)}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>
+                {formatUsdFromLbp(totalRemainingAmount, exchangeRate)}
+              </p>
+            </div>
+            <div className="rt-stat-card rt-stat-normal" style={styles.statCard}>
+              <p style={styles.statLabel}>Transactions</p>
+              <p style={styles.statValue}>{transactionCount}</p>
+              <p className="rt-stat-subvalue" style={styles.historyMeta}>{transactionFilterLabel}</p>
+            </div>
+          </div>
+        </section>
+
+        <section style={styles.section}>
+          <div className="rt-panel" style={styles.panel}>
+            <div className="rt-card-top" style={styles.cardTop}>
+              <div>
+                <h2 style={styles.sectionTitle}>Transaction Records</h2>
+                <p style={styles.historyMeta}>Showing recharge records for {transactionFilterLabel}.</p>
+              </div>
+              <button type="button" onClick={exportTransactions} style={styles.quietButton}>
+                Export Transactions
+              </button>
+            </div>
+
+            <div className="rt-list rt-history-list" style={styles.list}>
+              {filteredTransactions.map((transaction) => {
+                const record = transaction.type === 'payment'
+                  ? transaction.payment
+                  : transaction.recharge
+                const customer = customersById[String(record.customer_id)]
+                const amount = transaction.type === 'payment'
+                  ? getPaymentAmount(transaction.payment)
+                  : getRechargeAmount(transaction.recharge)
+                const isPaid = transaction.type === 'payment' || getRechargeBalance(transaction.recharge) <= 0
+                const formattedDate = record.created_at
+                  ? new Date(record.created_at).toLocaleString()
+                  : 'No date'
+
+                return (
+                  <div className="rt-history-card" key={transaction.id} style={styles.historyItem}>
+                    <div className="rt-card-top" style={styles.cardTop}>
+                      <div>
+                        <p style={styles.historyTitle}>{customer?.name || 'Unknown customer'}</p>
+                        <p style={styles.historyMeta}>{formattedDate}</p>
+                        <p style={styles.historyMeta}>
+                          Type: {transaction.type === 'payment' ? 'Payment' : 'Recharge'}
+                        </p>
+                        <p style={styles.historyMeta}>
+                          Customer type: {customer ? getCustomerTypeLabel(customer) : 'Unknown'}
+                        </p>
+                        {transaction.type === 'recharge' && (
+                          <p style={styles.historyMeta}>Service: {transaction.recharge.service || 'Recharge'}</p>
+                        )}
+                        <p style={styles.historyMeta}>
+                          {transaction.type === 'payment' ? 'Amount paid' : 'Amount'}: {formatLbp(amount)} / {formatUsdFromLbp(amount, exchangeRate)}
+                        </p>
+                      </div>
+                      <span
+                        className={`rt-status ${isPaid ? 'rt-status-paid' : 'rt-status-unpaid'}`}
+                        style={{
+                          ...styles.status,
+                          ...(isPaid ? styles.paidText : styles.unpaidText),
+                        }}
+                      >
+                        {transaction.type === 'payment' ? 'payment' : isPaid ? 'paid' : 'unpaid'}
+                      </span>
+                    </div>
+
+                    {record.notes && (
+                      <p style={styles.notes}>Notes: {record.notes}</p>
+                    )}
+                  </div>
+                )
+              })}
+
+              {filteredTransactions.length === 0 && (
+                <p style={styles.empty}>No transactions for this period.</p>
+              )}
+            </div>
+          </div>
+        </section>
       </div>
     )
   }
@@ -3255,8 +3614,8 @@ function App() {
       return renderServicesPage()
     }
 
-    if (activePage === 'monthlySummary') {
-      return renderMonthlySummaryPage()
+    if (activePage === 'transactions') {
+      return renderTransactionsPage()
     }
 
     return renderRechargeHistoryPage()
