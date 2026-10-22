@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { createLedgerLoader, emptyLedger, fetchLedger } from './lib/ledger'
 
 const defaultServices = ['Alfa', 'Touch', 'Ushare', 'Other']
 const mobileListLimit = 50
@@ -797,10 +798,14 @@ function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const [activePage, setActivePage] = useState('dashboard')
-  const [customers, setCustomers] = useState([])
-  const [recharges, setRecharges] = useState([])
-  const [payments, setPayments] = useState([])
-  const [services, setServices] = useState([])
+  const defaultServicesAttempted = useRef(false)
+  const [ledgerState, setLedgerState] = useState({ status: 'idle', owner: null, data: emptyLedger })
+  const { customers, recharges, payments, services } = ledgerState.data || emptyLedger
+  const [ledgerLoader] = useState(() => createLedgerLoader({
+    read: (signal) => fetchLedger(supabase, signal),
+    publish: setLedgerState,
+  }))
+  const ledgerReady = ledgerState.status === 'ready' && ledgerState.owner === session?.user?.id
   const [exchangeRate, setExchangeRate] = useState(() =>
     getSavedValue(exchangeRateStorageKey, defaultExchangeRate)
   )
@@ -872,82 +877,10 @@ function App() {
   const [isRechargeEditSubmitting, setIsRechargeEditSubmitting] = useState(false)
   const [deletingRechargeId, setDeletingRechargeId] = useState('')
 
-  const fetchCustomers = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
+  const refreshData = useCallback(() => ledgerLoader.load(), [ledgerLoader])
 
-    if (error) {
-      console.log('Error fetching customers:', error)
-    } else {
-      setCustomers(data || [])
-    }
-  }, [])
-
-  const fetchRecharges = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('recharges')
-      .select('*')
-
-    if (error) {
-      console.log('Error fetching recharges:', error)
-    } else {
-      setRecharges(data || [])
-    }
-  }, [])
-
-  const fetchPayments = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('payments')
-      .select('*')
-
-    if (error) {
-      console.log('Error fetching payments:', error)
-    } else {
-      setPayments(data || [])
-    }
-  }, [])
-
-  async function seedDefaultServices() {
-    const { error } = await supabase
-      .from('services')
-      .insert(defaultServices.map((service) => ({ name: service })))
-
-    if (error) {
-      console.log('Error creating default services:', error)
-    } else {
-      await fetchServices()
-    }
-  }
-
-  async function fetchServices() {
-    const { data, error } = await supabase
-      .from('services')
-      .select('*')
-
-    if (error) {
-      console.log('Error fetching services:', error)
-      setServices([])
-      return
-    }
-
-    if ((data || []).length === 0) {
-      await seedDefaultServices()
-      return
-    }
-
-    setServices(data || [])
-  }
-
-  const refreshData = useCallback(async () => {
-    await Promise.all([fetchCustomers(), fetchRecharges(), fetchPayments()])
-  }, [fetchCustomers, fetchPayments, fetchRecharges])
-
-  function clearAppData() {
-    setCustomers([])
-    setRecharges([])
-    setPayments([])
-    setServices([])
+  const clearAppData = useCallback(() => {
+    ledgerLoader.setOwner(null)
     setRechargeCustomerId('')
     setCustomerSelectorQuery('')
     setActiveServiceSelectorId('')
@@ -959,7 +892,7 @@ function App() {
     setExpandedCustomerId('')
     setEditingCustomerId('')
     setEditingRechargeId('')
-  }
+  }, [ledgerLoader])
 
   async function handleLoginSubmit(event) {
     event.preventDefault()
@@ -988,11 +921,14 @@ function App() {
   async function handleLogout() {
     try {
       setIsLoggingOut(true)
+      ledgerLoader.setOwner(null)
 
       const { error } = await supabase.auth.signOut()
 
       if (error) {
         console.log('Error logging out:', error)
+        ledgerLoader.setOwner(session.user.id)
+        await refreshData()
       } else {
         setSession(null)
         clearAppData()
@@ -1057,31 +993,7 @@ function App() {
         throw new Error('Add your Google Apps Script URL and secret key in App.jsx first.')
       }
 
-      const [
-        customersResult,
-        rechargesResult,
-        servicesResult,
-      ] = await Promise.all([
-        supabase.from('customers').select('*'),
-        supabase.from('recharges').select('*'),
-        supabase.from('services').select('*'),
-      ])
-
-      if (customersResult.error) {
-        throw customersResult.error
-      }
-
-      if (rechargesResult.error) {
-        throw rechargesResult.error
-      }
-
-      if (servicesResult.error) {
-        throw servicesResult.error
-      }
-
-      const customers = customersResult.data || []
-      const recharges = rechargesResult.data || []
-      const services = servicesResult.data || []
+      const { customers, recharges, services } = await ledgerLoader.readForBackup()
 
       const backupCustomers = customers.map((customer) => ({
         'Customer Name': customer.name || '',
@@ -1172,110 +1084,63 @@ function App() {
 
   useEffect(() => {
     let isCurrent = true
+    let authEventReceived = false
 
     supabase.auth.getSession().then(({ data, error }) => {
-      if (!isCurrent) {
-        return
-      }
-
-      if (error) {
-        console.log('Error checking auth session:', error)
-      }
-
-      setSession(data?.session || null)
+      if (!isCurrent || authEventReceived) return
+      if (error) setLoginError(error.message || 'Could not check your login session.')
+      setSession(error ? null : data?.session || null)
+      setIsAuthLoading(false)
+    }).catch((error) => {
+      if (!isCurrent || authEventReceived) return
+      setLoginError(error.message || 'Could not check your login session.')
       setIsAuthLoading(false)
     })
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (!isCurrent) {
-        return
-      }
-
+      if (!isCurrent) return
+      authEventReceived = true
       setSession(nextSession)
       setIsAuthLoading(false)
-
-      if (!nextSession) {
-        clearAppData()
-      }
+      if (!nextSession) clearAppData()
     })
 
     return () => {
       isCurrent = false
       authListener?.subscription?.unsubscribe()
     }
-  }, [])
+  }, [clearAppData])
+
+  const sessionUserId = session?.user?.id
+  useEffect(() => {
+    defaultServicesAttempted.current = false
+    ledgerLoader.setOwner(sessionUserId || null)
+    if (sessionUserId) void ledgerLoader.load()
+    return () => ledgerLoader.setOwner(null)
+  }, [sessionUserId, ledgerLoader])
 
   useEffect(() => {
-    if (!session) {
+    if (!ledgerReady) return
+    if (services.length) {
+      defaultServicesAttempted.current = false
       return
     }
-
-    let isCurrent = true
-
-    Promise.all([
-      supabase.from('customers').select('*'),
-      supabase.from('recharges').select('*'),
-      supabase.from('payments').select('*'),
-      supabase.from('services').select('*'),
-    ]).then(([customersResult, rechargesResult, paymentsResult, servicesResult]) => {
-      if (!isCurrent) {
-        return
-      }
-
-      if (customersResult.error) {
-        console.log('Error fetching customers:', customersResult.error)
-      } else {
-        setCustomers(customersResult.data || [])
-      }
-
-      if (rechargesResult.error) {
-        console.log('Error fetching recharges:', rechargesResult.error)
-      } else {
-        setRecharges(rechargesResult.data || [])
-      }
-
-      if (paymentsResult.error) {
-        console.log('Error fetching payments:', paymentsResult.error)
-      } else {
-        setPayments(paymentsResult.data || [])
-      }
-
-      if (servicesResult.error) {
-        console.log('Error fetching services:', servicesResult.error)
-      } else if ((servicesResult.data || []).length === 0) {
-        supabase
-          .from('services')
+    if (defaultServicesAttempted.current) return
+    defaultServicesAttempted.current = true
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+    void (async () => {
+      try {
+        const { error } = await supabase.from('services')
           .insert(defaultServices.map((service) => ({ name: service })))
-          .then(({ error }) => {
-            if (error) {
-              console.log('Error creating default services:', error)
-              return
-            }
-
-            supabase
-              .from('services')
-              .select('*')
-              .then((nextServicesResult) => {
-                if (!isCurrent) {
-                  return
-                }
-
-                if (nextServicesResult.error) {
-                  console.log('Error fetching services:', nextServicesResult.error)
-                } else {
-                  setServices(nextServicesResult.data || [])
-                }
-              })
-          })
-      } else {
-        setServices(servicesResult.data || [])
+        if (error) setServiceError(error.message || 'Could not create default services.')
+      } catch (error) {
+        setServiceError(error.message || 'Could not create default services.')
+      } finally {
+        await finishWrite()
       }
-    })
-
-    return () => {
-      isCurrent = false
-    }
-  }, [session])
+    })()
+  }, [ledgerReady, services.length, ledgerLoader])
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -1437,6 +1302,9 @@ function App() {
       return
     }
 
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+
     try {
       setIsSubmitting(true)
       setFormError('')
@@ -1459,10 +1327,10 @@ function App() {
         setCustomerNotes('')
         setCustomerType('normal')
         setCustomerSuccess('Customer added successfully.')
-        await fetchCustomers()
         customerNameInputRef.current?.focus()
       }
     } finally {
+      await finishWrite()
       setIsSubmitting(false)
     }
   }
@@ -1470,6 +1338,9 @@ function App() {
   async function handleRechargeSubmit(event) {
     event.preventDefault()
     setRechargeSuccess('')
+
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
 
     try {
       setIsRechargeSubmitting(true)
@@ -1492,10 +1363,10 @@ function App() {
         setRechargeAmount('')
         setRechargeNotes('')
         setRechargeSuccess('Recharge added successfully.')
-        await fetchRecharges()
         mainRechargeCustomerInputRef.current?.focus()
       }
     } finally {
+      await finishWrite()
       setIsRechargeSubmitting(false)
     }
   }
@@ -1553,6 +1424,9 @@ function App() {
   async function handleQuickRechargeSubmit(event) {
     event.preventDefault()
 
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+
     try {
       setIsQuickRechargeSubmitting(true)
       setQuickRechargeError('')
@@ -1570,9 +1444,9 @@ function App() {
       } else {
         setLastSelectedService(selectedQuickRechargeService)
         closeQuickRecharge()
-        await fetchRecharges()
       }
     } finally {
+      await finishWrite()
       setIsQuickRechargeSubmitting(false)
     }
   }
@@ -1588,21 +1462,18 @@ function App() {
       return
     }
 
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+
     try {
       setIsRecordingPayment(true)
       setRecordPaymentError('')
       setRecordPaymentSuccess('')
 
-      const { data: freshRecharges, error: fetchError } = await supabase
-        .from('recharges')
-        .select('*')
-        .eq('customer_id', recordPaymentCustomerId)
+      const { recharges: freshRecharges } = await finishWrite.read()
 
-      if (fetchError) {
-        throw fetchError
-      }
-
-      const customerOpenRecharges = (freshRecharges || [])
+      const customerOpenRecharges = freshRecharges
+        .filter((recharge) => String(recharge.customer_id) === String(recordPaymentCustomerId))
         .filter((recharge) => rechargeMatchesMonth(recharge, monthFilter, customMonth))
         .filter((recharge) => getRechargeBalance(recharge) > 0)
         .sort((firstRecharge, secondRecharge) => {
@@ -1669,19 +1540,6 @@ function App() {
         throw failedResult.error
       }
 
-      const updatedRechargesById = Object.fromEntries(
-        results
-          .filter((result) => result.data)
-          .map((result) => [String(result.data.id), result.data])
-      )
-
-      setRecharges((currentRecharges) => (
-        currentRecharges.map((recharge) => {
-          const updatedRecharge = updatedRechargesById[String(recharge.id)]
-
-          return updatedRecharge || recharge
-        })
-      ))
       const { error: paymentError } = await addPaymentToSupabase(
         recordPaymentCustomerId,
         appliedPaymentAmount,
@@ -1694,11 +1552,11 @@ function App() {
 
       setRecordPaymentSuccess(`Payment recorded: ${formatLbp(appliedPaymentAmount)}`)
       closeRecordPayment()
-      await Promise.all([fetchRecharges(), fetchPayments()])
     } catch (error) {
       console.log('Error recording payment:', error)
       setRecordPaymentError(error.message || 'Could not record payment.')
     } finally {
+      await finishWrite()
       setIsRecordingPayment(false)
     }
   }
@@ -1739,6 +1597,9 @@ function App() {
       return
     }
 
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+
     try {
       setIsCustomerEditSubmitting(true)
       setCustomerEditError('')
@@ -1758,9 +1619,9 @@ function App() {
         setCustomerEditError(error.message || 'Could not edit customer.')
       } else {
         cancelEditingCustomer()
-        await fetchCustomers()
       }
     } finally {
+      await finishWrite()
       setIsCustomerEditSubmitting(false)
     }
   }
@@ -1769,6 +1630,9 @@ function App() {
     if (!window.confirm('Delete this customer?')) {
       return
     }
+
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
 
     try {
       setDeletingCustomerId(String(customerId))
@@ -1780,13 +1644,12 @@ function App() {
 
       if (error) {
         console.log('Error deleting customer:', error)
-      } else {
-        await refreshData()
       }
     } finally {
+      await finishWrite()
       setDeletingCustomerId('')
     }
-  }, [refreshData])
+  }, [ledgerLoader])
 
   const handleMarkRechargePaid = useCallback(async (rechargeId) => {
     const recharge = recharges.find((currentRecharge) => String(currentRecharge.id) === String(rechargeId))
@@ -1806,6 +1669,9 @@ function App() {
     const paidAmount = getRechargeAmount(recharge)
     const remainingAmount = getRechargeBalance(recharge)
 
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+
     try {
       setPayingRechargeId(String(rechargeId))
 
@@ -1820,13 +1686,6 @@ function App() {
       if (error) {
         console.log('Error marking recharge as paid:', error)
       } else {
-        setRecharges((currentRecharges) => (
-          currentRecharges.map((currentRecharge) => (
-            String(currentRecharge.id) === String(rechargeId)
-              ? { ...currentRecharge, status: 'paid', paid_amount: paidAmount }
-              : currentRecharge
-          ))
-        ))
         await deleteLinkedRechargePayments(rechargeId)
         const { error: paymentError } = await addPaymentToSupabase(
           recharge?.customer_id,
@@ -1839,12 +1698,12 @@ function App() {
           console.log('Error creating payment transaction:', paymentError)
         }
 
-        await Promise.all([fetchRecharges(), fetchPayments()])
       }
     } finally {
+      await finishWrite()
       setPayingRechargeId('')
     }
-  }, [customers, fetchPayments, fetchRecharges, recharges])
+  }, [customers, ledgerLoader, recharges])
 
   const handleMarkAllPaid = useCallback(async (customerId) => {
     const customer = customers.find((currentCustomer) => String(currentCustomer.id) === String(customerId))
@@ -1877,6 +1736,9 @@ function App() {
       return
     }
 
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+
     try {
       setPayingCustomerId(String(customerId))
 
@@ -1893,17 +1755,6 @@ function App() {
       if (failedResult?.error) {
         console.log('Error marking all customer recharges as paid:', failedResult.error)
       } else {
-        const updatesById = Object.fromEntries(
-          rechargeUpdates.map((update) => [String(update.id), update.data])
-        )
-
-        setRecharges((currentRecharges) => (
-          currentRecharges.map((recharge) => {
-            const updateData = updatesById[String(recharge.id)]
-
-            return updateData ? { ...recharge, ...updateData } : recharge
-          })
-        ))
         const { error: paymentError } = await addPaymentToSupabase(
           customerId,
           totalOpenBalance
@@ -1913,12 +1764,12 @@ function App() {
           console.log('Error creating payment transaction:', paymentError)
         }
 
-        await Promise.all([fetchRecharges(), fetchPayments()])
       }
     } finally {
+      await finishWrite()
       setPayingCustomerId('')
     }
-  }, [customers, fetchPayments, fetchRecharges, recharges])
+  }, [customers, ledgerLoader, recharges])
 
   const startEditingRecharge = useCallback((recharge) => {
     setEditingRechargeId(String(recharge.id))
@@ -1975,6 +1826,9 @@ function App() {
       return
     }
 
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+
     try {
       setIsRechargeEditSubmitting(true)
 
@@ -2012,9 +1866,9 @@ function App() {
         }
 
         cancelEditingRecharge()
-        await Promise.all([fetchRecharges(), fetchPayments()])
       }
     } finally {
+      await finishWrite()
       setIsRechargeEditSubmitting(false)
     }
   }
@@ -2023,6 +1877,9 @@ function App() {
     if (!window.confirm('Delete this recharge?')) {
       return
     }
+
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
 
     try {
       setDeletingRechargeId(String(rechargeId))
@@ -2036,13 +1893,12 @@ function App() {
 
       if (error) {
         console.log('Error deleting recharge:', error)
-      } else {
-        await Promise.all([fetchRecharges(), fetchPayments()])
       }
     } finally {
+      await finishWrite()
       setDeletingRechargeId('')
     }
-  }, [fetchPayments, fetchRecharges])
+  }, [ledgerLoader])
 
   async function handleAddService(event) {
     event.preventDefault()
@@ -2064,20 +1920,25 @@ function App() {
       return
     }
 
-    const { error } = await supabase
-      .from('services')
-      .insert([{ name: trimmedService }])
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+    try {
+      const { error } = await supabase
+        .from('services')
+        .insert([{ name: trimmedService }])
 
-    if (error) {
-      console.log('Error adding service:', error)
-      setServiceError(error.message || 'Could not add service.')
-    } else {
-      setNewServiceName('')
-      setServiceError('')
-      setServiceSuccess('Service added successfully.')
-      setLastSelectedService(trimmedService)
-      await fetchServices()
-      serviceNameInputRef.current?.focus()
+      if (error) {
+        console.log('Error adding service:', error)
+        setServiceError(error.message || 'Could not add service.')
+      } else {
+        setNewServiceName('')
+        setServiceError('')
+        setServiceSuccess('Service added successfully.')
+        setLastSelectedService(trimmedService)
+        serviceNameInputRef.current?.focus()
+      }
+    } finally {
+      await finishWrite()
     }
   }
 
@@ -2086,40 +1947,45 @@ function App() {
       return
     }
 
-    const serviceName = getServiceName(service)
-    let query = supabase.from('services').delete()
+    const finishWrite = ledgerLoader.beginWrite()
+    if (!finishWrite) return
+    try {
+      const serviceName = getServiceName(service)
+      let query = supabase.from('services').delete()
 
-    if (service.id) {
-      query = query.eq('id', service.id)
-    } else {
-      query = query.eq('name', serviceName)
-    }
-
-    const { error } = await query
-
-    if (error) {
-      console.log('Error deleting service:', error)
-      setServiceError(error.message || 'Could not delete service.')
-    } else {
-      if (lastSelectedService === serviceName) {
-        setLastSelectedService('')
+      if (service.id) {
+        query = query.eq('id', service.id)
+      } else {
+        query = query.eq('name', serviceName)
       }
 
-      if (rechargeService === serviceName) {
-        setRechargeService('')
-      }
+      const { error } = await query
 
-      if (quickRechargeService === serviceName) {
-        setQuickRechargeService('')
-      }
+      if (error) {
+        console.log('Error deleting service:', error)
+        setServiceError(error.message || 'Could not delete service.')
+      } else {
+        if (lastSelectedService === serviceName) {
+          setLastSelectedService('')
+        }
 
-      if (editRechargeService === serviceName) {
-        setEditRechargeService('')
-      }
+        if (rechargeService === serviceName) {
+          setRechargeService('')
+        }
 
-      setServiceError('')
-      setServiceSuccess('')
-      await fetchServices()
+        if (quickRechargeService === serviceName) {
+          setQuickRechargeService('')
+        }
+
+        if (editRechargeService === serviceName) {
+          setEditRechargeService('')
+        }
+
+        setServiceError('')
+        setServiceSuccess('')
+      }
+    } finally {
+      await finishWrite()
     }
   }
 
@@ -4434,8 +4300,21 @@ function App() {
           </button>
         </header>
 
+        {!ledgerReady && (
+          <section style={styles.panel} role={ledgerState.status === 'error' ? 'alert' : 'status'} aria-live="polite">
+            <p>{ledgerState.status === 'error'
+              ? `Balances unavailable: ${ledgerState.error}`
+              : ledgerState.status === 'saving' ? 'Saving changes. Balances are unavailable until reloaded.'
+                : 'Loading and verifying all records. Balances are not available yet.'}</p>
+            {(ledgerState.status === 'error' || ledgerState.status === 'idle') && (
+              <button type="button" style={styles.button} onClick={refreshData}>Retry</button>
+            )}
+          </section>
+        )}
+        <div hidden={!ledgerReady} inert={!ledgerReady}>
         <div className="rt-page-body" key={activePage}>
           {renderActivePage()}
+        </div>
         </div>
       </main>
 
@@ -4449,9 +4328,11 @@ function App() {
         + Customer
       </button>
 
-      {renderCustomerDetailModal()}
-      {renderQuickRechargeModal()}
-      {renderRecordPaymentModal()}
+      <div hidden={!ledgerReady} inert={!ledgerReady}>
+        {renderCustomerDetailModal()}
+        {renderQuickRechargeModal()}
+        {renderRecordPaymentModal()}
+      </div>
     </div>
   )
 }
